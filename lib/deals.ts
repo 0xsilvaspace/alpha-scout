@@ -1,0 +1,459 @@
+/**
+ * ALPHA SCOUT — seed data.
+ *
+ * The 21 deals below are copied verbatim from the ALPHA SCOUT Muse Space
+ * (getstate, 2026-11-11): same ids, titles, tracks, estimated values,
+ * valueUsd, eligibility, costType, expiry dates, source URLs, requirements,
+ * action steps, verification status and risk notes. No deal was invented,
+ * and no value, date or link was changed.
+ *
+ * Expiry handling is date-relative: a deal whose expiresOn is in the past
+ * is treated as expired (Archive tab); one expiring within 48 hours is
+ * flagged Expiring Soon. "Ongoing" = expiresOn is null.
+ */
+
+export type Track =
+  | "scholarships"
+  | "jobs"
+  | "ai-tools"
+  | "crypto"
+  | "nfts"
+  | "banking"
+  | "cloud"
+  | "software";
+
+export type CostType = "truly-free" | "free-trial-card";
+export type Verification = "verified" | "pending";
+
+export interface Deal {
+  id: number;
+  title: string;
+  track: Track;
+  estimatedValue: string;
+  valueUsd: number | null;
+  eligibility: string;
+  costType: CostType;
+  /** YYYY-MM-DD, or null = Ongoing. */
+  expiresOn: string | null;
+  sourceUrl: string;
+  requirements: string;
+  /** Numbered steps, e.g. "1. Do X. 2. Do Y." */
+  actionSteps: string;
+  verification: Verification;
+  riskNote: string;
+  status: "active";
+}
+
+export const TRACK_LABELS: Record<Track, string> = {
+  scholarships: "Scholarships",
+  jobs: "Remote Jobs",
+  "ai-tools": "AI Tools",
+  crypto: "Crypto Airdrops",
+  nfts: "NFTs",
+  banking: "U-Cards / Banking",
+  cloud: "VPS / Cloud",
+  software: "Software",
+};
+
+export const DEALS: Deal[] = [
+  {
+    id: 1,
+    title: "Commonwealth Shared Scholarships 2027-28 — Fully Funded UK Master's",
+    track: "scholarships",
+    estimatedValue: "Full tuition + £1,712/month stipend (£2,000 in London) + return airfare",
+    valueUsd: 35000,
+    eligibility: "Nigeria explicitly listed as eligible Commonwealth country; applicants must be citizens/permanent residents of an eligible Commonwealth country.",
+    costType: "truly-free",
+    expiresOn: "2026-12-08",
+    sourceUrl: "https://www.beevapathways.com/resources/commonwealth-shared-scholarships-2027-how-to-apply",
+    requirements: "Bachelor's degree, admission to an approved full-time master's at a participating UK university, financial need; no application fee via CSC Central.",
+    actionSteps: "1. Check the 2027/28 approved course list on the CSC site. 2. Apply for admission to a participating UK university. 3. Apply via CSC Central before 16:00 GMT on 8 Dec 2026. 4. University nominates candidates to the CSC.",
+    verification: "pending",
+    riskNote: "Source is a roundup/guide, not the CSC official page — verify course list and deadline on cscuk.fcdo.gov.uk before applying.",
+    status: "active",
+  },
+  {
+    id: 2,
+    title: "DAAD In-Country/In-Region Scholarship 2027 — Fully Funded Master's in Africa",
+    track: "scholarships",
+    estimatedValue: "Fully funded master's at selected African universities (tuition + stipend)",
+    valueUsd: 10000,
+    eligibility: "Open to nationals/permanent residents of Sub-Saharan African countries, including Nigeria; study in home country or another Sub-Saharan African country.",
+    costType: "truly-free",
+    expiresOn: "2026-11-12",
+    sourceUrl: "https://scholarpositions.com/daad-in-region-scholarship-2027/",
+    requirements: "First degree (Bachelor's or equivalent); apply to one of the 13 selected development-related master's programmes in the 2027 call.",
+    actionSteps: "1. Pick a programme from the official DAAD open-calls list. 2. Secure/apply for admission to the host university. 3. Submit via the DAAD portal before midnight CET on 12 Nov 2026. 4. Upload proof of admission/arrival when requested.",
+    verification: "pending",
+    riskNote: "URGENT: deadline is 12 Nov 2026 (tomorrow). Source is a roundup — confirm your programme's exact deadline on daad.de, as host programmes may set their own steps.",
+    status: "active",
+  },
+  {
+    id: 3,
+    title: "Erasmus Mundus NOHA Scholarship 2027 — Fully Funded Master's in Humanitarian Action",
+    track: "scholarships",
+    estimatedValue: "€1,400/month for 24 months + tuition/participation costs covered",
+    valueUsd: 39000,
+    eligibility: "Open to students worldwide; Partner countries include Nigeria and other African countries. Must have completed degree by 15 Dec 2026.",
+    costType: "truly-free",
+    expiresOn: "2026-12-15",
+    sourceUrl: "https://scholarshipsedge.com/erasmus-mundus-noha-scholarship/",
+    requirements: "Completed bachelor's degree by 15 Dec 2026; apply via apply.nohanet.org and select 'Apply with the Erasmus Mundus grant'.",
+    actionSteps: "1. Prepare degree, transcripts and supporting documents. 2. Create an application at apply.nohanet.org. 3. Select Erasmus Mundus grant option. 4. Submit before 23:59 GMT on 15 Dec 2026.",
+    verification: "pending",
+    riskNote: "Source is a roundup, not the official NOHA site — verify amounts and deadline on the official NOHA application page before submitting.",
+    status: "active",
+  },
+  {
+    id: 4,
+    title: "Mastercard Foundation Scholars Program at Sciences Po — Fully Funded 2-Year Master's in France",
+    track: "scholarships",
+    estimatedValue: "Fully funded 2-year master's at Sciences Po, Paris",
+    valueUsd: 25000,
+    eligibility: "Citizens of an African country (including Nigeria) only; dual citizenship including a non-African country is not eligible; under 35 on 1 Sept of application year.",
+    costType: "truly-free",
+    expiresOn: "2026-12-14",
+    sourceUrl: "https://www.careerbridgeafrica.com/opportunity/the-sciences-po-mastercard-foundation-scholars-program-2027-for-graduate-study-in-france-9c2782",
+    requirements: "African citizenship, under 35, first-time applicant, not already holding/pursuing a master's; apply via Sciences Po international graduate admissions.",
+    actionSteps: "1. Choose an eligible 2-year master's at Sciences Po. 2. Apply via international graduate admissions (23 Nov for Feb decision, or by 14 Dec 2026). 3. Apply for the Mastercard Foundation Scholars Program and fee waiver Oct–mid-Dec. 4. Await selection results in April 2027.",
+    verification: "pending",
+    riskNote: "Source is an aggregator — verify eligibility and fee-waiver dates on sciencespo.fr before applying.",
+    status: "active",
+  },
+  {
+    id: 5,
+    title: "MLH Fellowship Spring 2027 — Remote 12-Week Software Engineering Fellowship",
+    track: "scholarships",
+    estimatedValue: "Need-based educational stipend up to $5,000 + mentorship on real open-source/corporate projects",
+    valueUsd: 5000,
+    eligibility: "Open globally except US-embargoed nations; Nigeria is not embargoed. Age 18+, no degree required, 20-30 hrs/week.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://resources.devweekends.com/resources/open-source-programs/mlh-fellowship",
+    requirements: "Intermediate-advanced coding in at least one language; commit 20-30 hrs/week for 12 weeks; Spring 2027 batch runs 25 Jan–16 Apr 2027.",
+    actionSteps: "1. Go to fellowship.mlh.io and check Spring 2027 applications. 2. Choose Open Source, Software Engineering or SRE track. 3. Submit application (rolling, closes weeks before start). 4. Complete interview/assessment if shortlisted.",
+    verification: "pending",
+    riskNote: "Source is a guide, not fellowship.mlh.io — no exact Spring 2027 closing date was stated, so expiry is null; confirm the live deadline on the official MLH site.",
+    status: "active",
+  },
+  {
+    id: 6,
+    title: "Turing — LLM Trainer, Video Annotation Specialist (Remote, Nigeria listed)",
+    track: "jobs",
+    estimatedValue: "Paid remote contractor role; rate per listing",
+    valueUsd: null,
+    eligibility: "Listing explicitly names Nigeria among eligible locations (India, Pakistan, Nigeria, Kenya, Egypt, Ghana, Bangladesh, Turkey, Brazil, Mexico).",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://work.turing.com/r/L1asjH5peJ",
+    requirements: "Annotate short video clips of robots; data annotation/QA experience a plus, not required; at least 4 hrs/day, 20 hrs/week, 4-hr PST overlap; 2-month contract.",
+    actionSteps: "1. Open the Turing job link and create a free account. 2. Complete your profile. 3. Complete the two sample video annotation tasks via Vetsmith. 4. Await Turing's next steps.",
+    verification: "verified",
+    riskNote: "",
+    status: "active",
+  },
+  {
+    id: 7,
+    title: "Mercor — Atomistic Materials Modeling Expert ($84/hr, Remote)",
+    track: "jobs",
+    estimatedValue: "$84/hr contract, at least 10 hrs/week",
+    valueUsd: null,
+    eligibility: "Listing marked open in Nigeria, Ghana, South Africa and Egypt; Mercor's supported-countries list includes Nigeria for payouts via Stripe/Wise.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://www.asvalley.com/jobs/mercor-atomistic-materials-modeling-expert",
+    requirements: "Computational materials science expertise (DFT, molecular dynamics); PhD or unusually strong MSc; at least 10 hrs/week; check AI-generated answers and write reference solutions/rubrics.",
+    actionSteps: "1. Open the Mercor listing via the source link. 2. Create a free Mercor profile and upload CV. 3. Complete the AI interview (20-30 min). 4. Await review; do not pay any fee — Mercor never charges applicants.",
+    verification: "pending",
+    riskNote: "Source is a job aggregator, not work.mercor.com — confirm rate, hours and Nigeria eligibility on the live Mercor listing before applying. Note: Kenneth already has Mercor rejections for two other roles; do not reapply to those.",
+    status: "active",
+  },
+  {
+    id: 8,
+    title: "Groq Free Plan — Free LLM API, No Card",
+    track: "ai-tools",
+    estimatedValue: "Free API: 1,000 requests/day, 200,000 tokens/day per model (gpt-oss-120b/20b, Qwen3.8-27B) + Whisper",
+    valueUsd: null,
+    eligibility: "Open globally to any developer with a GroqCloud account; no country restriction stated; no card needed for the Free plan.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://startupperks.co/programs/groq-free-plan",
+    requirements: "GroqCloud account and API key; stay within per-model rate limits (30 RPM, 8,000 TPM).",
+    actionSteps: "1. Sign up at GroqCloud. 2. Create an API key. 3. Call a free-plan model (e.g. openai/gpt-oss-120b) within the published limits. 4. Add a payment method only if you choose to upgrade to Developer.",
+    verification: "pending",
+    riskNote: "Source is a roundup citing Groq docs (console.groq.com/docs/rate-limits) — verify current limits in your Groq console, as free models rotate.",
+    status: "active",
+  },
+  {
+    id: 9,
+    title: "OpenRouter Free Models (:free) — $0 API, No Card",
+    track: "ai-tools",
+    estimatedValue: "50 free-model requests/day, no card (1,000/day after a one-time $10 credit purchase, optional)",
+    valueUsd: null,
+    eligibility: "Open globally; sign up with email/GitHub/Google, no credit card needed for :free models.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://aifree.dev/learn/free-openrouter-models",
+    requirements: "OpenRouter account and API key; use model IDs ending in :free or the openrouter/free router; 20 requests/minute cap.",
+    actionSteps: "1. Sign up at openrouter.ai. 2. Create an API key. 3. Check the live free-models list (filter :free). 4. Call a :free model via the OpenAI-compatible API.",
+    verification: "pending",
+    riskNote: "Source is a guide checked 10 Nov 2026 against OpenRouter docs/API — free lineup rotates frequently; confirm the model ID is $0 before calling. Never send private data via free models.",
+    status: "active",
+  },
+  {
+    id: 10,
+    title: "Google Gemini API Free Tier via AI Studio — Free Flash Models, No Card",
+    track: "ai-tools",
+    estimatedValue: "Free input/output tokens on Gemini Flash/Flash-Lite and Gemma models, rate-limited per project",
+    valueUsd: null,
+    eligibility: "Open globally to anyone 18+ with a Google account; no card or billing account on a free-tier project.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://grabaicredits.com/en/deals/gemini-api-free-tier",
+    requirements: "Google account; create a project/API key in Google AI Studio; do not link billing to that project (linking moves it to paid Tier 1).",
+    actionSteps: "1. Sign in to Google AI Studio. 2. Accept terms and get an API key. 3. Check your per-model limits in AI Studio. 4. Call a free-tier model (e.g. gemini-3.8-flash) without adding billing.",
+    verification: "pending",
+    riskNote: "Source is a roundup checked against Google pricing 17 Oct 2026 — free-tier limits are shown only in AI Studio and change; free-tier content may be used to improve Google products, so do not send customer data.",
+    status: "active",
+  },
+];
+
+export const DEALS_PART2: Deal[] = [
+  {
+    id: 11,
+    title: "Solana Foundation Grants — Rolling Milestone Grants for Public Goods",
+    track: "crypto",
+    estimatedValue: "Milestone-based grants for public goods; no published cap; Superteam microgrants ~$10,000",
+    valueUsd: 10000,
+    eligibility: "Anyone can apply — individuals, teams, nonprofits, companies, universities, academics; no geography matrix published, including Nigeria.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://hub.causo.ai/guides/how-to-apply-to-solana-foundation-grants-2026",
+    requirements: "Project built on/migrating to Solana, open-source public good; project overview, public-good rationale, milestone budget; review ~1 week, decision ~3 weeks.",
+    actionSteps: "1. Open the Solana Foundation Grants/Funding page. 2. Submit the rolling form with overview, public-good case and milestone budget. 3. Await review (~1 week) and decision (~3 weeks). 4. Deliver milestones for tranche payments.",
+    verification: "pending",
+    riskNote: "Source is a guide, not solana.com — no per-grant amount is published; convertible grants can convert to investment on milestones. Never pay to apply.",
+    status: "active",
+  },
+  {
+    id: 12,
+    title: "Ethereum Foundation Ecosystem Support Program (ESP) — Small Grants up to $30,000",
+    track: "crypto",
+    estimatedValue: "ESP Small Grants capped at $30,000, paid on-chain in ETH, non-dilutive",
+    valueUsd: 30000,
+    eligibility: "Individuals, teams and organisations worldwide, including for-profit companies where the funded work is open-source and non-commercial; Nigeria not excluded.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://hub.causo.ai/guides/how-to-apply-to-ethereum-foundation-esp-2026",
+    requirements: "Open-source, non-commercial public-goods work strengthening Ethereum; not for past work, financial products, or projects with a planned token launch.",
+    actionSteps: "1. Browse the ESP Wishlist/RFPs on esp.ethereum.foundation. 2. Submit a proposal with methodology, timeline and deliverables. 3. Clear Grant Management and domain-team review (may include interview). 4. Complete identity verification and grant letter if approved.",
+    verification: "pending",
+    riskNote: "Source is a guide — at last check the ESP Wishlist showed no active Wishlists, so check the live ESP page for an open opportunity before writing a proposal; grants are milestone-based, not guaranteed.",
+    status: "active",
+  },
+  {
+    id: 13,
+    title: "Rarible Free Minting (Lazy Minting) — Mint NFTs with $0 Upfront Gas",
+    track: "nfts",
+    estimatedValue: "Create and list NFTs with no upfront gas; NFT mints on-chain when a buyer purchases it (buyer pays gas)",
+    valueUsd: null,
+    eligibility: "Open globally to any creator with a wallet; no country restriction stated.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://sekin.in/the-5-best-marketplaces-to-mint-an-nft-for-free/",
+    requirements: "Wallet, digital file and metadata; free minting uses Rarible's pre-deployed collection on Ethereum; marketplace fee (0.5%-7.5%) applies only on sale.",
+    actionSteps: "1. Open Rarible and connect a wallet. 2. Choose Create > Single/Multiple and select Free minting. 3. Upload file, set metadata and price. 4. Sign the (gas-free) message to list; the NFT mints when bought.",
+    verification: "pending",
+    riskNote: "Source is a roundup — 'free' means no upfront creator gas, not no fees ever; marketplace fees apply on sale and gas applies to later transfers/burns. Verify the fee preview before publishing.",
+    status: "active",
+  },
+  {
+    id: 14,
+    title: "OpenSea — Free/Low-Cost NFT Minting on Polygon and Low-Fee Chains",
+    track: "nfts",
+    estimatedValue: "Mint/list NFTs on Polygon/low-fee chains with $0 or near-$0 upfront cost; marketplace fee only on sale",
+    valueUsd: null,
+    eligibility: "Open globally to any creator with a wallet; no country restriction stated.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://www.techbloat.com/the-5-best-marketplaces-to-mint-an-nft-for-free.html",
+    requirements: "Wallet, file and metadata; use Polygon or another supported low-fee network — avoid Ethereum mainnet if the goal is $0 upfront.",
+    actionSteps: "1. Open OpenSea and connect a wallet. 2. Create a collection/NFT on Polygon or a low-fee chain. 3. Upload, set metadata and list. 4. Check the fee preview before confirming any transaction.",
+    verification: "pending",
+    riskNote: "Source is a roundup — minting directly on Ethereum mainnet can incur gas; confirm the chain and fee preview in OpenSea Studio before minting.",
+    status: "active",
+  },
+  {
+    id: 15,
+    title: "Cleva — Free USD Account for Nigerians (No Opening/Monthly Fees)",
+    track: "banking",
+    estimatedValue: "Free USD receiving account (ACH/Wire/FedNow) + free naira withdrawals and zero conversion markup",
+    valueUsd: null,
+    eligibility: "Built for Nigerians; open with a Nigerian ID (NIN/BVN/passport/driver's licence); USD account with US account/routing numbers.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://www.getcleva.com/blog/cleva-vs-grey-vs-raenest-which-usd-account-is-best-for-nigerian-freelancers-in-2026",
+    requirements: "Email, legal name as on ID, KYC with Nigerian government ID; app on iOS/Android.",
+    actionSteps: "1. Download the Cleva app. 2. Sign up with email and complete KYC. 3. Get your USD account details instantly. 4. Share details with clients/platforms (e.g. Upwork) to receive USD.",
+    verification: "pending",
+    riskNote: "Source is Cleva's own blog (official domain, not the signup page). Account opening is free, but deposit fees apply ($1 under $300, $3 above) and the virtual card costs $3 to create — confirm live fees in-app.",
+    status: "active",
+  },
+  {
+    id: 16,
+    title: "Grey — Free USD/GBP/EUR Receiving Accounts for Nigerians",
+    track: "banking",
+    estimatedValue: "Free USD, GBP and EUR receiving accounts + virtual USD card for online spending",
+    valueUsd: null,
+    eligibility: "Explicitly for Nigerians/freelancers in Nigeria; sign up with valid ID and selfie; receiving spans 88+ countries.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://grey.co/blog/how-to-receive-usd-freelance-payments-in-nigeria",
+    requirements: "Valid ID and selfie for KYC; Grey app or grey.co; Nigerian bank account for naira withdrawals.",
+    actionSteps: "1. Sign up for a free account at grey.co or in the app. 2. Verify identity with ID + selfie. 3. Open USD/GBP/EUR accounts and share details with clients. 4. Convert to naira (1% capped at $6) and withdraw to your Nigerian bank for ₦35.",
+    verification: "pending",
+    riskNote: "Source is Grey's own blog (official domain, not the signup page). Receiving accounts are free, but the virtual card costs ~$4-5 one-time and USD deposits cost 0.8% (capped $10) — confirm live fees in-app.",
+    status: "active",
+  },
+  {
+    id: 17,
+    title: "GitHub Student Developer Pack — 80+ Free Developer Tools for Students",
+    track: "cloud",
+    estimatedValue: "GitHub Pro + Copilot Student + $100 Azure credit + JetBrains, Heroku $13/mo x 24mo, free domain — over $700 first-year value",
+    valueUsd: 700,
+    eligibility: "Students 13+ worldwide enrolled in a degree/diploma programme (incl. University of Lagos); verify with school email or dated enrolment proof.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://grabaicredits.com/en/deals/github-student-developer-pack",
+    requirements: "Personal GitHub account, age 13+, enrolled student; school email or student ID/transcript/enrolment letter; Azure $100 credit requires 18+.",
+    actionSteps: "1. Go to education.github.com/pack and click Sign up. 2. Submit school email or dated proof of enrolment. 3. Wait for verification (days). 4. Claim each partner offer separately from the pack page.",
+    verification: "pending",
+    riskNote: "Source is a roundup verified Oct 2026 against GitHub pages — partner offers change often (DigitalOcean $200 ended 31 Jul 2026; Copilot sign-ups were paused at one point). Check the live pack page before planning around one partner.",
+    status: "active",
+  },
+  {
+    id: 18,
+    title: "Google Cloud Free Trial — $300 Credit for 90 Days + Always Free Tier",
+    track: "cloud",
+    estimatedValue: "$300 Welcome credit for 90 days + Always Free tier (1 e2-micro VM, 2M Cloud Run requests, 5GB storage/month)",
+    valueUsd: 300,
+    eligibility: "New Google Cloud customers worldwide who have never paid for Google Cloud/Maps/Firebase and never used the trial; Nigeria not excluded.",
+    costType: "free-trial-card",
+    expiresOn: null,
+    sourceUrl: "https://reconscribe.com/free-credits/cloud/",
+    requirements: "Google account, new customer, payment method for identity verification ($0-$1 hold); credit cannot pay for Gemini API in AI Studio.",
+    actionSteps: "1. Go to cloud.google.com/free and choose Get started. 2. Create a billing account with a payment method. 3. Spend the $300 within 90 days. 4. Do not upgrade — resources stop when credit/90 days end, with a 30-day grace period.",
+    verification: "pending",
+    riskNote: "Card required at signup (free-trial-card, not truly-free). Source is a roundup checked Oct 2026 — verify terms on cloud.google.com/free; the $300 cannot be used for Gemini API in AI Studio.",
+    status: "active",
+  },
+  {
+    id: 19,
+    title: "Oracle Cloud Always Free — 2 OCPU / 12GB ARM VPS, Forever",
+    track: "cloud",
+    estimatedValue: "Always Free Ampere A1 VM (2 OCPU, 12GB RAM) + 200GB block storage + 2 Autonomous Databases, no expiry",
+    valueUsd: 360,
+    eligibility: "Open globally; sign up with a real (non-virtual/prepaid) card for identity verification only.",
+    costType: "free-trial-card",
+    expiresOn: null,
+    sourceUrl: "https://prodogon.com/blog/devops/deploy-free-app-oracle/",
+    requirements: "Oracle Cloud account, card for verification, choose a home region (permanent for Always Free); keep the VM non-idle (idle instances may be reclaimed).",
+    actionSteps: "1. Sign up at oracle.com/cloud/free. 2. Pick a home region with ARM capacity. 3. Create a VM.Standard.A1.Flex instance (2 OCPU, 12GB) with an Always Free image. 4. Keep it in use to avoid idle reclamation.",
+    verification: "pending",
+    riskNote: "Card required for verification (free-trial-card). Oracle halved the ARM allowance in June 2026 from 4 OCPU/24GB to 2 OCPU/12GB and capacity is not guaranteed — verify current limits on Oracle's Always Free page.",
+    status: "active",
+  },
+  {
+    id: 20,
+    title: "JetBrains Student Pack — All Professional IDEs Free for 1 Year",
+    track: "software",
+    estimatedValue: "Free 1-year All Products Pack (IntelliJ IDEA Ultimate, PyCharm Pro, WebStorm, CLion, etc.), renewable while a student",
+    valueUsd: 289,
+    eligibility: "Students/faculty at accredited institutions in a programme of 1+ years full-time study, worldwide including Nigeria; verify via university email, ISIC/ITIC or GitHub Student Pack.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://grabaicredits.com/en/deals/jetbrains-student-license",
+    requirements: "Accredited student status; non-commercial educational use only; renew annually from JetBrains Account.",
+    actionSteps: "1. Go to jetbrains.com/academy/student-pack. 2. Apply with university email, ISIC/ITIC card or GitHub Student Pack. 3. Activate the licence in your JetBrains Account. 4. Renew each year while you remain a student.",
+    verification: "pending",
+    riskNote: "Source is a roundup checked Oct 2026 — AI Pro is NOT included (AI Free tier + 30-day AI Pro trial only); educational licences cannot be used for commercial work.",
+    status: "active",
+  },
+  {
+    id: 21,
+    title: "Notion Education Plan — Plus Plan Free for Students/Educators",
+    track: "software",
+    estimatedValue: "Plus plan free (unlimited pages/blocks, unlimited file uploads, 30-day history, 100 guests) — $10-12/month value",
+    valueUsd: 120,
+    eligibility: "Students/educators at accredited colleges/universities listed in the World Higher Education Database, including Nigerian universities; school email required as primary email.",
+    costType: "truly-free",
+    expiresOn: null,
+    sourceUrl: "https://grabaicredits.com/en/deals/notion-education-plan",
+    requirements: "Accredited university email as the account's primary email (student IDs not accepted); one-member workspace on the Free plan; re-verify yearly; K-12 not eligible.",
+    actionSteps: "1. Sign in to Notion with your school email as primary email. 2. Go to Settings > Billing > Get free Education plan. 3. Verify your school email. 4. Use Plus features on your one-member workspace.",
+    verification: "pending",
+    riskNote: "Source is a roundup checked Oct 2026 — full Notion AI is not included (trial only); upgrading the workspace to a paid plan permanently ends Education eligibility.",
+    status: "active",
+  },
+];
+
+/** All 21 deals, in id order. */
+export const ALL_DEALS: Deal[] = [...DEALS, ...DEALS_PART2].sort((a, b) => a.id - b.id);
+
+const DAY_MS = 86_400_000;
+
+function startOfToday(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/** Whole days from today until expiry. Null = Ongoing (no expiry). */
+export function daysLeft(deal: Deal): number | null {
+  if (!deal.expiresOn) return null;
+  const expiry = new Date(`${deal.expiresOn}T00:00:00`);
+  return Math.round((expiry.getTime() - startOfToday().getTime()) / DAY_MS);
+}
+
+/** Expired = it had a date and that date is before today. */
+export function isExpired(deal: Deal): boolean {
+  const d = daysLeft(deal);
+  return d !== null && d < 0;
+}
+
+/** Expiring soon = expires within 48h (0–2 days left, not already expired). */
+export function isExpiringSoon(deal: Deal): boolean {
+  const d = daysLeft(deal);
+  return d !== null && d >= 0 && d <= 2;
+}
+
+export function isActive(deal: Deal): boolean {
+  return !isExpired(deal);
+}
+
+/** Sum of valueUsd where present; deals with null valueUsd contribute $0. */
+export function totalValue(deals: Deal[]): number {
+  return deals.reduce((sum, d) => sum + (d.valueUsd ?? 0), 0);
+}
+
+/** "Open to Nigeria" = eligibility mentions Nigeria / Nigerian / Africa / Sub-Saharan. */
+export function isOpenToNigeria(deal: Deal): boolean {
+  return /nigeria|nigerian|africa|sub-saharan/i.test(deal.eligibility);
+}
+
+/** "Worldwide" = eligibility mentions worldwide / globally. */
+export function isWorldwide(deal: Deal): boolean {
+  return /worldwide|globally/i.test(deal.eligibility);
+}
+
+/** Split a "1. … 2. …" action-steps string into individual steps. */
+export function parseSteps(actionSteps: string): string[] {
+  return actionSteps
+    .split(/\s*\d+\.\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+export function formatUsd(n: number): string {
+  return `$${n.toLocaleString("en-US")}`;
+}
