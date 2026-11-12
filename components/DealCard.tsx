@@ -25,9 +25,13 @@ import {
 
 interface DealCardProps {
   deal: ResolvedDeal;
+  /** Feed last-sync time (e.g. "12 Nov 2026, 12:48"), shown on grant
+   * cards as the time their source was last checked. This is the feed's
+   * sync time, not a per-URL live check. */
+  lastSync?: string;
 }
 
-export default function DealCard({ deal }: DealCardProps) {
+export default function DealCard({ deal, lastSync }: DealCardProps) {
   const [open, setOpen] = useState(false);
   const [reported, setReported] = useState(false);
   const dLeft = daysLeft(deal);
@@ -122,12 +126,19 @@ export default function DealCard({ deal }: DealCardProps) {
           {deal.eligibility}
         </p>
         {deal.track === "grants" ? (
-          <p className="text-stone-600">
-            <span className="text-xs font-medium text-stone-500">
-              Funded by ·{" "}
-            </span>
-            <span className="font-semibold text-stone-900">{deal.funder}</span>
-          </p>
+          <>
+            <p className="text-stone-600">
+              <span className="text-xs font-medium text-stone-500">
+                Funded by ·{" "}
+              </span>
+              <span className="font-semibold text-stone-900">{deal.funder}</span>
+            </p>
+            {lastSync && lastSync !== "—" ? (
+              <p className="text-xs text-stone-500">
+                Source checked {lastSync}
+              </p>
+            ) : null}
+          </>
         ) : null}
         <p
           className={

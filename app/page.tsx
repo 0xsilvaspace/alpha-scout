@@ -28,6 +28,7 @@ import {
 } from "@/lib/deals";
 import {
   DISPLAY_LABELS,
+  matchesUniPod,
   prepareDeals,
   type DisplayTrack,
   type GrantKind,
@@ -148,6 +149,23 @@ export default function Home() {
     };
   }, [activeDeals]);
 
+  /** Funders of the grants currently in the feed, in first-seen order —
+   * computed from the feed data at render time, never hardcoded. */
+  const grantFunders = useMemo(() => {
+    const seen = new Set<string>();
+    activeDeals
+      .filter((d) => d.track === "grants")
+      .forEach((d) => seen.add(d.funder));
+    return [...seen];
+  }, [activeDeals]);
+
+  /** Opportunities relevant to AI UniPod UNILAG members, matched by
+   * keyword against the feed's own text (see UNIPOD_KEYWORDS). */
+  const unipodCount = useMemo(
+    () => activeDeals.filter(matchesUniPod).length,
+    [activeDeals],
+  );
+
   const visible = useMemo(() => {
     let base =
       tab === "all"
@@ -175,11 +193,23 @@ export default function Home() {
     if (filters.worldwide) base = base.filter(isWorldwide);
     if (filters.freeNoCard) base = base.filter((d) => d.costType === "truly-free");
     if (filters.expiringSoon) base = base.filter(isExpiringSoon);
+    if (filters.unipod) base = base.filter(matchesUniPod);
     return base;
   }, [tab, grantFilter, search, filters, activeDeals, archivedDeals]);
 
   const toggleFilter = (key: keyof Filters) =>
     setFilters((f) => ({ ...f, [key]: !f[key] }));
+
+  /** From the UniPod section: show the UniPod-curated view and scroll
+   * to the list. */
+  const showUniPod = () => {
+    setTab("all");
+    setGrantFilter("all");
+    setFilters((f) => ({ ...f, unipod: true }));
+    document
+      .getElementById("opportunities")
+      ?.scrollIntoView({ behavior: "smooth" });
+  };
 
   return (
     <div className="min-h-screen bg-stone-50">
@@ -256,11 +286,57 @@ export default function Home() {
           feedSource={feedSource}
         />
 
+        {/* For AI UniPod UNILAG */}
+        <section
+          aria-label="For AI UniPod UNILAG"
+          className="mt-8 rounded-lg border border-stone-200 bg-white p-5 md:p-6"
+        >
+          <h2 className="text-lg font-semibold tracking-tight text-stone-900">
+            For AI UniPod UNILAG
+          </h2>
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-stone-600">
+            AI UniPod UNILAG launched on 7 April 2026, the first AI UniPod in
+            Nigeria. It is a collaboration between the Federal Government,
+            UNDP and the University of Lagos, and part of UNDP&apos;s
+            Timbuktoo project.
+          </p>
+          <ul className="mt-3 flex flex-wrap gap-2">
+            {[
+              "Design Lab",
+              "Virtual Reality Lab",
+              "AI & Robotics Lab",
+              "Prototype Lab (Makerspace)",
+            ].map((lab) => (
+              <li
+                key={lab}
+                className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs font-medium text-stone-700"
+              >
+                {lab}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 max-w-3xl text-sm leading-relaxed text-stone-600">
+            The Prototype Lab is the Makerspace, where members prototype and
+            fabricate with 3D printers, resin printers and laser cutters.
+            Members use Alpha Scout to find scholarships, grants, hackathons
+            and free tools for their projects.
+          </p>
+          <button
+            type="button"
+            onClick={showUniPod}
+            className="mt-4 inline-flex items-center gap-2 rounded-md bg-green-800 px-4 py-2.5 text-sm font-medium text-white hover:bg-green-900"
+          >
+            See opportunities for UniPod members
+            <span className="text-xs opacity-80">({unipodCount})</span>
+            <ArrowRight className="h-4 w-4" />
+          </button>
+        </section>
+
         {/* Opportunities */}
         <section id="opportunities" className="scroll-mt-20 pt-8">
           <nav
             aria-label="Categories"
-            className="flex gap-1 overflow-x-auto border-b border-stone-200"
+            className="flex flex-wrap gap-1 border-b border-stone-200 max-sm:flex-nowrap max-sm:overflow-x-auto"
           >
             {TABS.map(({ id, label, icon: Icon }) => {
               const active = tab === id;
@@ -290,11 +366,17 @@ export default function Home() {
           </nav>
 
           {tab === "grants" ? (
-            <div
-              className="mt-4 flex flex-wrap gap-2"
-              role="group"
-              aria-label="Grant types"
-            >
+            <div className="mt-4">
+              {grantFunders.length > 0 ? (
+                <p className="text-xs leading-relaxed text-stone-500">
+                  Sources in this list: {grantFunders.join(", ")}.
+                </p>
+              ) : null}
+              <div
+                className="mt-2 flex flex-wrap gap-2"
+                role="group"
+                aria-label="Grant types"
+              >
               {GRANT_FILTERS.filter((g) => grantCounts[g.id] > 0).map(
                 ({ id, label }) => {
                   const active = grantFilter === id;
@@ -319,6 +401,7 @@ export default function Home() {
                   );
                 },
               )}
+            </div>
             </div>
           ) : null}
 
@@ -357,7 +440,7 @@ export default function Home() {
           ) : (
             <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {visible.map((deal) => (
-                <DealCard key={deal.id} deal={deal} />
+                <DealCard key={deal.id} deal={deal} lastSync={lastSync} />
               ))}
             </div>
           )}
@@ -381,6 +464,11 @@ export default function Home() {
               </div>
             ))}
           </div>
+          <p className="mt-4 max-w-3xl text-sm leading-relaxed text-stone-600">
+            Grants: grants are sourced from official foundation and programme
+            pages. The funder is shown on each grant card, and the feed
+            re-checks the list every 4 hours.
+          </p>
         </section>
 
         <footer className="border-t border-stone-200 py-6 text-center text-xs leading-relaxed text-stone-500">

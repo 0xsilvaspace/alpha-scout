@@ -385,3 +385,46 @@ export function dedupeDeals(deals: Deal[]): Deal[] {
 export function prepareDeals(deals: Deal[]): ResolvedDeal[] {
   return dedupeDeals(deals).map(resolveDeal);
 }
+
+/* ------------------------------------------------------------------ */
+/* AI UniPod UNILAG curation                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Keywords that mark an opportunity as relevant to AI UniPod UNILAG
+ * members, matched against the deal's title, requirements and benefit
+ * text. The list is deliberately narrow and transparent: it covers the
+ * UniPod's work (robotics, making and fabrication, AI training) and the
+ * kinds of support its members use (student cloud credits, hackathons,
+ * builder grants). Nothing is invented — a deal matches only if the
+ * feed's own text contains one of these terms.
+ */
+export const UNIPOD_KEYWORDS: string[] = [
+  "robotics",
+  "robot",
+  "maker",
+  "makerspace",
+  "hardware",
+  "3d print",
+  "laser cut",
+  "ai training",
+  "machine learning",
+  "artificial intelligence",
+  "student cloud",
+  "hackathon",
+  "builder grant",
+  "embedded",
+  "arduino",
+  "esp32",
+  "prototyping",
+  "fabrication",
+  "computer vision",
+];
+
+export function matchesUniPod(
+  deal: Pick<Deal, "title" | "requirements" | "estimatedValue" | "eligibility">,
+): boolean {
+  const hay =
+    `${deal.title} ${deal.requirements} ${deal.estimatedValue} ${deal.eligibility}`.toLowerCase();
+  return UNIPOD_KEYWORDS.some((k) => hay.includes(k));
+}
