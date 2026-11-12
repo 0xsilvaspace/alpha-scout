@@ -4,6 +4,7 @@ import { ALL_DEALS, type Deal } from "@/lib/deals";
 import { FEED_URL } from "@/lib/feed";
 import { prepareDeals } from "@/lib/classify";
 import {
+  appendMissingOpenScholarships,
   buildBroadSnapshot,
   buildJudgmentSnapshot,
   buildSnapshot,
@@ -12,6 +13,7 @@ import {
   isGoodModelReply,
   isJudgmentQuestion,
   JUDGMENT_OPEN_FIELD_INSTRUCTION,
+  openSectionDeals,
   rankDeals,
   rankJudgmentShortlist,
   todayLine,
@@ -533,11 +535,28 @@ export async function POST(req: Request) {
     }
   });
   if (winner?.reply) {
+    let finalReply = winner.reply;
+    let appended = 0;
+    if (judgment) {
+      // Deterministic guarantee: the strongest any-discipline
+      // scholarships are appended when the model fails to name them,
+      // so they can never be dropped by the model's choice.
+      const augmented = appendMissingOpenScholarships(
+        winner.reply,
+        openSectionDeals(ranked),
+      );
+      finalReply = augmented.reply;
+      appended = augmented.appended;
+    }
     console.log(
       "[ask-scout] answered",
-      JSON.stringify({ path: `model:${winner.model}`, question: questionLog }),
+      JSON.stringify({
+        path: `model:${winner.model}`,
+        question: questionLog,
+        ...(judgment ? { appendedScholarships: appended } : {}),
+      }),
     );
-    return NextResponse.json({ reply: winner.reply });
+    return NextResponse.json({ reply: finalReply });
   }
   for (const r of settled) {
     logFailure(r.model === GEMINI_MODEL ? "gemini" : "openrouter", r);

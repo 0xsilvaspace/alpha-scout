@@ -1420,3 +1420,82 @@ function buildSnapshotFrom(
   return parts.join("");
 }
 
+/* ------------------------------------------------------------------ */
+/* Deterministic guarantee for judgment answers                      */
+/* ------------------------------------------------------------------ */
+
+// The model kept dropping the strongest any-discipline scholarships
+// even when they were in its shortlist (run 13 named 4 of 6 and
+// missed Gates Cambridge and Stipendium Hungaricum), so the route
+// appends any it fails to name. The pool is the flagship
+// any-discipline scholarships, matched by distinctive title
+// substrings: taking the soonest-expiring open scholarships
+// literally would append the filmmaking academy and the two
+// Mastercard programmes that close first, not the strongest fits.
+
+/** Distinctive substrings of the flagship any-discipline scholarship
+ *  titles, matched case-insensitively against both deal titles and
+ *  the model reply. */
+const FLAGSHIP_OPEN_KEYS = [
+  "daad",
+  "commonwealth shared",
+  "gates cambridge",
+  "stipendium hungaricum",
+  "erasmus mundus",
+];
+
+/** The open-section deals of a judgment shortlist: listings open to
+ *  any field of study. */
+export function openSectionDeals(ranked: ResolvedDeal[]): ResolvedDeal[] {
+  return ranked.filter((d) => isOpenField(d) || isFieldOpen(d));
+}
+
+/** Append the flagship any-discipline scholarships the model reply
+ *  failed to name, soonest-expiring first, at most 3. Returns the
+ *  reply unchanged when none are missing, when the open section has
+ *  no flagship scholarships, or when the reply is a refusal. */
+export function appendMissingOpenScholarships(
+  reply: string,
+  openDeals: ResolvedDeal[],
+): { reply: string; appended: number } {
+  const unchanged = { reply, appended: 0 };
+  if (
+    /could not answer|couldn't answer|cannot (help|answer)|unable to answer/i.test(
+      reply,
+    )
+  ) {
+    return unchanged;
+  }
+  // One entry per flagship key: several deals can share a name (the
+  // feed lists Commonwealth Shared twice), so keep the
+  // soonest-expiring deal per key.
+  const byKey = new Map<string, ResolvedDeal>();
+  for (const d of openDeals) {
+    if (d.track !== "scholarships") continue;
+    const title = d.title.toLowerCase();
+    for (const key of FLAGSHIP_OPEN_KEYS) {
+      if (!title.includes(key)) continue;
+      const prev = byKey.get(key);
+      if (!prev || bySoonest(d, prev) < 0) byKey.set(key, d);
+    }
+  }
+  const lower = reply.toLowerCase();
+  const missing = [...byKey.entries()]
+    .filter(([key]) => !lower.includes(key))
+    .map(([, d]) => d)
+    .sort(bySoonest)
+    .slice(0, 3);
+  if (missing.length === 0) return unchanged;
+  const lines = ["Also open to you as a graduate:"];
+  for (const d of missing) {
+    const value = shorten(valueClause(d), 90).replace(/[.;\s]+$/, "");
+    lines.push(
+      `- **${shortTitle(d)}**: ${value}. ${closesClause(d)}. [Source](${d.sourceUrl})`,
+    );
+  }
+  return {
+    reply: `${reply.trimEnd()}\n\n${clean(lines.join("\n"))}`,
+    appended: missing.length,
+  };
+}
+
