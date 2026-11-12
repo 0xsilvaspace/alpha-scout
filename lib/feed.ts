@@ -3,7 +3,7 @@
  *
  * The deployed app fetches this JSON at runtime from the public
  * `0xsilvaspace/alpha-scout` GitHub repo (raw.githubusercontent.com).
- * The repo's deals.json is refreshed by a scheduled sync (every 4h) from
+ * The repo's deals.json is refreshed by a scheduled sync (every 2h) from
  * the ALPHA SCOUT Space's 2-hour scan, so the live site updates without
  * a redeploy. Until that repo exists / the fetch succeeds, the app falls
  * back silently to the baked-in snapshot in lib/deals.ts. Either way,

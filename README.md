@@ -1,40 +1,53 @@
-# ALPHA SCOUT — Global Zero-Cost Intelligence Terminal
+# Alpha Scout
 
-A production-ready, fully responsive Next.js dashboard of verified free
-global opportunities — scholarships, remote jobs, AI credits, crypto grants,
-NFTs, banking, cloud and software — open to Nigerians. No deal requires
-payment.
+A dashboard of verified free opportunities open to Nigerians: scholarships, remote jobs, grants, AI tools, hackathons, competitions, cloud credits, software, banking offers, and crypto opportunities. Every listing is free to apply for or claim. Nothing on the site asks you to pay an application, deposit, or activation fee.
 
-## Data
+Live site: https://alpha-scout-vercel.vercel.app
 
-The 21 deals in `lib/deals.ts` are copied verbatim from the ALPHA SCOUT
-Muse Space scan of 11 Nov 2026 (ids 1–21): same titles, tracks, values,
-eligibility, cost types, expiry dates, source URLs, requirements, action
-steps, verification status and risk notes. No deal was invented and no
-value, date or link was changed.
+## What it does
 
-- Total tracked value (sum of `valueUsd` where present): **$155,769**
-- 9 deals carry no dollar value — their benefit is shown as text instead.
-- Only 1 deal is marked **Verified** (Turing, id 6); the other 20 are
-  **Pending Verification**.
-- Expiry is date-relative: a deal past its `expiresOn` moves to the Archive
-  tab automatically; one expiring within 48 hours is flagged Expiring Soon.
-  At seed time the only Expiring Soon deal is the DAAD scholarship
-  (id 2, expires 2026-11-12), so the Archive starts empty.
+- **Browse by category.** Tabs for Scholarships, Grants, AI Tools, Hackathons, Competitions, Remote Jobs, Cloud, Software, Banking, and Crypto, plus an Expiring soon tab and an Archive tab.
+- **Check the details before you apply.** Each listing shows its value, who is eligible, what is required, the steps to apply, its verification status, and any risk note. Every listing links to its official source.
+- **Never miss a deadline.** Listings closing within 48 hours are flagged Expiring soon. Listings past their expiry leave the active list automatically.
+- **Save what matters.** Sign in with an email and password to keep a saved archive that follows you across devices. Without signing in, saved items stay on the current device only.
+- **Ask Scout.** A chatbot for signed-in users that answers questions about the listings on the site, such as which scholarships close soon or what a specific programme requires. It only answers from the listings shown here and links back to their sources.
+- **Fresh data, no redeploy needed.** The listings feed refreshes every 2 hours from the Alpha Scout listings database. The app fetches the live feed when it loads and falls back to a built-in snapshot if the feed is unreachable.
+
+As of the latest feed sync, the site tracks 236 listings with a combined listed value of about $2.06 million. Counts change as listings are added, expire, or close.
 
 ## Stack
 
-- Next.js 15 (App Router) + React 19 + TypeScript (strict)
-- Tailwind CSS v4 + lucide-react icons
-- No API routes, no backend, no environment variables — static data only.
+- Next.js 15 (App Router) with React 19 and TypeScript
+- Tailwind CSS v4 and lucide-react icons
+- Three.js for the rotating globe in the header and hero
+- Supabase Auth for sign-in and the saved archive
+- Server-side chatbot route with a primary provider and a fallback provider
 
-## Local development
+## Getting started
+
+Requirements: Git and Node.js 20 or newer (npm ships with Node).
 
 ```bash
+git clone https://github.com/0xsilvaspace/alpha-scout.git
+cd alpha-scout
 npm install
 npm run dev
-# open http://localhost:3000
 ```
+
+Open http://localhost:3000 in your browser. For the full setup, including environment variables and the Supabase table for saved items, see [SETUP.md](SETUP.md).
+
+## Configuration
+
+Copy `.env.example` to `.env.local` and fill in the values:
+
+| Variable | Required for | Where to get it |
+| --- | --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Sign-in and saved archive sync | Supabase project dashboard |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Sign-in and saved archive sync | Supabase project dashboard |
+| `GEMINI_API_KEY` | Ask Scout chatbot (primary) | Google AI Studio |
+| `OPENROUTER_API_KEY` | Ask Scout chatbot (fallback) | openrouter.ai |
+
+The site loads and shows listings without any of these set. Sign-in needs the two Supabase values. The chatbot needs at least one of the two API keys and falls back to the other provider when the first is unavailable.
 
 ## Production build
 
@@ -45,30 +58,16 @@ npm run start
 
 ## Deploy to Vercel
 
-Option A — Vercel CLI:
-
-```bash
-npm i -g vercel
-vercel
-vercel --prod
-```
-
-Option B — Vercel dashboard: import this repository (or drag the project
-folder into a new Vercel project). The framework is detected as Next.js
-(`vercel.json` sets `framework: "nextjs"`); no environment variables are
-needed. The live URL will be `https://<project-name>.vercel.app`.
+Import this repository in the Vercel dashboard, set the four environment variables above for Production, and deploy. The live site is deployed from the `main` branch. See [SETUP.md](SETUP.md) for the step-by-step version.
 
 ## Project structure
 
-```
-app/
-  layout.tsx        # metadata + dark shell
-  page.tsx          # tabs, filters, grid wiring (client component)
-  globals.css       # Tailwind v4 + terminal theme
-components/
-  StatsBar.tsx      # active count, total value, expiring soon, system status
-  FilterBar.tsx     # search + Open to Nigeria / Worldwide / No Card / <48h
-  DealCard.tsx      # card, steps accordion, official link, local report flag
-lib/
-  deals.ts          # Deal type, the 21 deals, helpers (daysLeft, totals…)
-```
+- `app/` : pages, the chatbot API route (`app/api/chat/route.ts`), and the auth callback
+- `components/` : deal cards, filters, stats bar, auth panel, chatbot, 3D globe
+- `lib/` : deal classification and dedupe (`classify.ts`), live feed fetching (`feed.ts`), the built-in fallback snapshot (`deals.ts`), Supabase clients
+- `deals.json` : the live listings feed, regenerated by the scheduled sync every 2 hours
+- `public/` : static assets
+
+## Data
+
+`deals.json` is generated by a scheduled sync from the Alpha Scout listings database and committed to this repo. Do not edit it by hand; the next sync overwrites it. The app reads it at runtime from `https://raw.githubusercontent.com/0xsilvaspace/alpha-scout/main/deals.json` and falls back to `lib/deals.ts` when the fetch fails.
