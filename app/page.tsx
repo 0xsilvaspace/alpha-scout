@@ -80,7 +80,7 @@ const HOW_IT_WORKS: { title: string; text: string }[] = [
   },
   {
     title: "3. Updated",
-    text: "The list refreshes every 4 hours. Save an opportunity to your archive if you want to keep it for later.",
+    text: "The list refreshes every 2 hours. Save an opportunity to your archive if you want to keep it for later.",
   },
 ];
 

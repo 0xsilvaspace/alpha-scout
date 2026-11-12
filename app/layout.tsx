@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Alpha Scout: Free Opportunities, Verified",
   description:
-    "Free scholarships, grants, hackathons, remote jobs, AI tools, cloud and software, open to Nigerians. Checked against official sources and updated every 4 hours.",
+    "Free scholarships, grants, hackathons, remote jobs, AI tools, cloud and software, open to Nigerians. Checked against official sources and updated every 2 hours.",
 };
 
 export default function RootLayout({

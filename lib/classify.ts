@@ -4,7 +4,7 @@
  * The live feed (and the baked-in fallback) carry the Space's raw tracks
  * (scholarships, jobs, ai-tools, crypto, nfts, banking, cloud, software).
  * The app re-classifies every deal at load time, so the rules below apply
- * equally to the feed and the fallback, and survive future 4-hour feed
+ * equally to the feed and the fallback, and survive future 2-hour feed
  * syncs that re-push the same raw data. Raw feed data is never edited.
  *
  * Display tracks: Scholarships, Grants, AI Tools, Hackathons, Competitions,
