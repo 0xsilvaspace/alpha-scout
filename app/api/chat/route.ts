@@ -10,7 +10,8 @@ const PRIMARY_MODEL = "google/gemma-4-31b-it:free";
 const FALLBACK_MODEL = "baidu/ernie-5.5-flash-preview:free";
 const SNAPSHOT_MAX_CHARS = 8000;
 const SNAPSHOT_RETRY_CHARS = 4000;
-const MAX_TOKENS = 900;
+const MAX_TOKENS_BROAD = 400;
+const MAX_TOKENS_DETAIL = 1500;
 const FETCH_TIMEOUT_MS = 9000;
 // Vercel Hobby functions stop around 10s, so the whole attempt chain
 // must fit inside this budget, with a little headroom for the reply.
@@ -288,6 +289,7 @@ async function callGemini(
   systemPrompt: string,
   messages: { role: "user" | "assistant"; content: string }[],
   timeoutMs: number,
+  maxTokens: number,
 ): Promise<CallResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -302,7 +304,7 @@ async function callGemini(
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemPrompt }] },
         contents: toGeminiContents(messages),
-        generationConfig: { maxOutputTokens: MAX_TOKENS },
+        generationConfig: { maxOutputTokens: maxTokens },
       }),
       signal: controller.signal,
     });
@@ -328,6 +330,18 @@ async function callGemini(
       };
     }
     const data: unknown = await res.json();
+    const finishReason =
+      data &&
+      typeof data === "object" &&
+      Array.isArray((data as { candidates?: unknown }).candidates) &&
+      (data as { candidates: { finishReason?: unknown }[] }).candidates[0]
+        ?.finishReason;
+    if (finishReason === "MAX_TOKENS") {
+      console.warn(
+        "[ask-scout] gemini reply cut off by output token cap",
+        JSON.stringify({ model: GEMINI_MODEL, maxTokens }),
+      );
+    }
     const parts =
       data &&
       typeof data === "object" &&
@@ -373,6 +387,7 @@ async function callOpenRouter(
   systemPrompt: string,
   messages: { role: "user" | "assistant"; content: string }[],
   timeoutMs: number,
+  maxTokens: number,
 ): Promise<CallResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -386,7 +401,7 @@ async function callOpenRouter(
       },
       body: JSON.stringify({
         model,
-        max_tokens: MAX_TOKENS,
+        max_tokens: maxTokens,
         messages: [{ role: "system", content: systemPrompt }, ...messages],
       }),
       signal: controller.signal,
@@ -517,7 +532,7 @@ export async function POST(req: Request) {
     "The ranked sample below is drawn from the same list the counts describe, and earlier answers in this conversation came from that same list, so do not retract or second-guess them when the sample shows only part of the list.",
     "Never invent details, values or deadlines. If the list does not contain the answer, say so plainly and suggest checking the official source.",
     "Always include the official source link for any opportunity you mention.",
-    "Keep answers short and plain.",
+    "Keep every answer under 250 words. List at most 5 opportunities, one short line each, with the official source link. No long paragraphs.",
     "Opportunities:",
   ].join("\n");
   const systemBroad = [
@@ -527,7 +542,7 @@ export async function POST(req: Request) {
     "Summarize by category using the counts. Do not list every item one by one, and do not go into detail on the example entries.",
     "Never invent details, values or deadlines. If the list does not contain the answer, say so plainly and suggest checking the official source.",
     "The example entries below have no source links, so do not invent any. Only mention a source link when it is shown in the list.",
-    "Keep answers short and plain.",
+    "Keep every answer under 250 words. List at most 5 opportunities, one short line each, with the official source link. No long paragraphs.",
     "Opportunities:",
   ].join("\n");
   const buildPrompt = (maxChars: number) =>
@@ -548,6 +563,10 @@ export async function POST(req: Request) {
   // its whole timeout ends the chain instead of starting one that
   // cannot finish.
   const chainStarted = Date.now();
+  // Broad answers are short (counts plus one line per category), so a
+  // small token cap keeps them fast enough to finish inside the timeout.
+  // Detail answers list items with links, so they get a larger cap.
+  const maxTokens = broad ? MAX_TOKENS_BROAD : MAX_TOKENS_DETAIL;
   const logFailure = (label: string, r: CallResult) => {
     console.error(
       `[ask-scout] ${label} failed`,
@@ -577,6 +596,7 @@ export async function POST(req: Request) {
       buildPrompt(SNAPSHOT_MAX_CHARS),
       messages,
       FETCH_TIMEOUT_MS,
+      maxTokens,
     );
     if (first.ok && first.reply) {
       return NextResponse.json({ reply: first.reply });
@@ -594,6 +614,7 @@ export async function POST(req: Request) {
       buildPrompt(SNAPSHOT_RETRY_CHARS),
       messages,
       attemptTimeout(),
+      maxTokens,
     );
     if (second.ok && second.reply) {
       return NextResponse.json({ reply: second.reply });
@@ -609,6 +630,7 @@ export async function POST(req: Request) {
       buildPrompt(SNAPSHOT_RETRY_CHARS),
       messages,
       attemptTimeout(),
+      maxTokens,
     );
     if (third.ok && third.reply) {
       return NextResponse.json({ reply: third.reply });
