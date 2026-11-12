@@ -88,9 +88,69 @@ function clean(text: string): string {
   return text.replace(/\s*\u2014\s*/g, ", ").replace(/^, /, "");
 }
 
-function truncate(text: string, max: number): string {
-  const t = text.trim();
-  return t.length <= max ? t : `${t.slice(0, max).trimEnd()}...`;
+/** Shorten text to at most max chars, cutting at a word boundary and
+ *  ending with a period. Never slices a word and never leaves "...". */
+function shorten(text: string, max: number): string {
+  const t = clean(text).trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  let kept = (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).replace(
+    /[.;,\s]+$/,
+    "",
+  );
+  // Never leave an unclosed parenthesis behind.
+  const open = (kept.match(/\(/g) ?? []).length;
+  const close = (kept.match(/\)/g) ?? []).length;
+  if (open > close) {
+    kept = kept.slice(0, kept.lastIndexOf("(")).replace(/[.;,\s]+$/, "");
+  }
+  return `${kept}.`;
+}
+
+/** Split field text into clauses on semicolons and sentence ends. */
+function clauses(text: string): string[] {
+  return clean(text)
+    .split(/;\s*|\.\s+/)
+    .map((c) => c.trim().replace(/[.;\s]+$/, ""))
+    .filter((c) => c.length > 0);
+}
+
+/** First clause of a field, e.g. the audience before the extra detail. */
+function firstClause(text: string): string {
+  return clauses(text)[0] ?? "";
+}
+
+/** Split a comma/plus-separated field into its items. */
+function proseItems(text: string): string[] {
+  return clean(text)
+    .split(/\s*\+\s*|,\s*/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/** Join list fragments ("a, b, c") into prose ("a, b and c"). */
+function proseList(text: string): string {
+  const items = proseItems(text);
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/** Normalise one requirement fragment so it reads after "applicants
+ *  need": bare verbs become "to ...", bare nouns get an article. */
+function normalizeFragment(item: string): string {
+  const t = lowerFirst(item.trim());
+  if (
+    /^(apply|register|submit|complete|upload|pick|hold|have|provide|create|choose|send|check|confirm|watch|download|generate)\b/.test(
+      t,
+    )
+  ) {
+    return `to ${t}`;
+  }
+  if (/^(first|second|third)\b/.test(t)) return `a ${t}`;
+  if (/^(proof|access|experience|funding|support)\b/.test(t)) return t;
+  const article = /^[aeiou]/.test(t) ? "an" : "a";
+  return `${article} ${t}`;
 }
 
 function formatDate(iso: string): string {
@@ -101,21 +161,260 @@ function formatDate(iso: string): string {
   }).format(new Date(`${iso}T00:00:00`));
 }
 
-/** "30 November 2026 (in 18 days)", "(today)", "(tomorrow)", or "Ongoing". */
-function deadlineText(d: ResolvedDeal): string {
-  if (!d.expiresOn) return "Ongoing, no closing date";
+/** "Applications close on 30 November 2026, in 18 days." */
+function deadlineSentence(d: ResolvedDeal): string {
+  if (!d.expiresOn) return "There is no closing date listed.";
   const left = daysLeft(d);
   const date = formatDate(d.expiresOn);
-  if (left === null) return date;
-  if (left < 0) return `${date} (closed)`;
-  if (left === 0) return `${date} (today)`;
-  if (left === 1) return `${date} (tomorrow)`;
-  return `${date} (in ${left} days)`;
+  if (left === null) return `Applications close on ${date}.`;
+  if (left < 0) return `Applications closed on ${date}.`;
+  if (left === 0) return `Applications close today, ${date}.`;
+  if (left === 1) return `Applications close tomorrow, ${date}.`;
+  return `Applications close on ${date}, in ${left} days.`;
 }
 
-/** One short line per deal: title, value, deadline, official source. */
+/** "Closes 30 November 2026 (in 18 days)" for list lines. */
+function closesClause(d: ResolvedDeal): string {
+  if (!d.expiresOn) return "No closing date listed";
+  const left = daysLeft(d);
+  const date = formatDate(d.expiresOn);
+  if (left === null) return `Closes ${date}`;
+  if (left < 0) return `Closed ${date}`;
+  if (left === 0) return `Closes today, ${date}`;
+  if (left === 1) return `Closes tomorrow, ${date}`;
+  return `Closes ${date} (in ${left} days)`;
+}
+
+/** What the listing is, in one word, from its title first. */
+function dealNoun(d: ResolvedDeal): string {
+  const t = d.title.toLowerCase();
+  if (/\bscholarship\b/.test(t)) return "scholarship";
+  if (/\bfellowship\b/.test(t)) return "fellowship";
+  if (/\bhackathon\b|\bhack week\b/.test(t)) return "hackathon";
+  if (/\bcompetition\b|\bcontest\b|\bchallenge\b|\bolympiad\b/.test(t)) return "competition";
+  if (/\bgrant\b/.test(t)) return "grant";
+  if (/\bjob\b|\bexpert\b|\bresearcher\b|\binternship\b/.test(t)) return "remote job";
+  if (/\btool\b|\bapi\b/.test(t)) return "free tool";
+  if (/\baccount\b|\bcard\b/.test(t)) return "banking offer";
+  const labels: Record<string, string> = {
+    scholarships: "scholarship",
+    grants: "grant",
+    hackathons: "hackathon",
+    competitions: "competition",
+    jobs: "remote job",
+    "ai-tools": "free AI tool",
+    cloud: "cloud offer",
+    software: "software offer",
+    banking: "banking offer",
+    crypto: "crypto opportunity",
+  };
+  return labels[d.track] ?? "opportunity";
+}
+
+/** Short value clause for list lines: the headline figure only.
+ *  Splits on the first colon or semicolon outside parentheses, so
+ *  "$250,000 ... (grand prize $55,000; $10,000 x 13 first places)"
+ *  is not sliced mid-parenthesis by the semicolon inside it. */
+function valueClause(d: ResolvedDeal): string {
+  const value = clean(d.estimatedValue).trim();
+  if (/^no cash (?:prize )?stated\b/i.test(value)) return "There is no cash prize";
+  let depth = 0;
+  let head = value;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    else if ((ch === ":" || ch === ";") && depth === 0) {
+      head = value.slice(0, i);
+      break;
+    }
+  }
+  let out = head.trim().replace(/\s*\+\s*/g, " plus ");
+  const open = (out.match(/\(/g) ?? []).length;
+  const close = (out.match(/\)/g) ?? []).length;
+  if (open > close) out = out.slice(0, out.lastIndexOf("(")).trim();
+  return out;
+}
+
+/** The value as a natural sentence. "No cash stated" is rephrased,
+ *  never printed raw as an opening. */
+function valueSentence(d: ResolvedDeal): string {
+  const value = clean(d.estimatedValue).trim();
+  // clean() turns the em dash into a comma, so "No cash stated — ..."
+  // arrives here as "No cash stated, ...".
+  const noCash = value.match(/^no cash (?:prize )?stated\s*[,—–-]\s*(.+)$/i);
+  const noun = dealNoun(d);
+  if (noCash) {
+    const rest = proseList(noCash[1].trim());
+    return `There is no cash prize. The ${noun} offers ${lowerFirst(rest)}.`;
+  }
+  const withPlus = value.replace(/\s*\+\s*/g, " plus ").replace(/[.;\s]+$/, "");
+  return `It offers ${lowerFirst(withPlus)}.`;
+}
+
+/** Who the listing is for: the first clause of the eligibility text,
+ *  with "Open to" and "Listing states" lead-ins removed. */
+function audienceClause(d: ResolvedDeal): string {
+  const a = firstClause(d.eligibility);
+  return a
+    .replace(/^listing states\s+/i, "")
+    .replace(/^open to\s+/i, "")
+    .trim();
+}
+
+/** Requirements that add something new: clauses not already covered
+ *  by the eligibility text or the action steps. Returns "" when the
+ *  requirements only repeat them. */
+function requirementsProse(d: ResolvedDeal): string {
+  const reqText = clean(d.requirements).trim();
+  if (!reqText) return "";
+  const contentWords = (s: string): Set<string> =>
+    new Set(s.toLowerCase().match(/[a-z]{4,}/g) ?? []);
+  const eligWords = contentWords(d.eligibility);
+  const stepWords = contentWords(d.actionSteps);
+  const kept = clauses(reqText).filter((c) => {
+    const words = contentWords(c);
+    if (words.size === 0) return false;
+    const inElig =
+      [...words].filter((w) => eligWords.has(w)).length / words.size;
+    const inSteps =
+      [...words].filter((w) => stepWords.has(w)).length / words.size;
+    return inElig < 0.6 && inSteps < 0.6;
+  });
+  if (kept.length === 0) return "";
+  const items = proseItems(kept.join(", ")).map(normalizeFragment);
+  const joined =
+    items.length <= 1
+      ? items[0] ?? ""
+      : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+  return shorten(joined, 260).replace(/[.;\s]+$/, "");
+}
+
+/** Eligibility and requirements merged into one clean sentence, never
+ *  printed back to back as raw fields. */
+function whoSentence(d: ResolvedDeal): string {
+  const a = audienceClause(d);
+  const req = requirementsProse(d);
+  if (!a && !req) return "";
+  if (!a) return `Applicants need ${req}.`;
+  if (/^open in\b/i.test(a)) {
+    return req
+      ? `It is ${a}, and applicants need ${req}.`
+      : `It is ${a}.`;
+  }
+  return req
+    ? `It is for ${a}, and applicants need ${req}.`
+    : `It is for ${a}.`;
+}
+
+/** Numbered action steps ("1. ... 2. ...") as flowing prose. */
+function stepsProse(d: ResolvedDeal): string {
+  const raw = clean(d.actionSteps).trim();
+  if (!raw) return "";
+  const parts = raw
+    .split(/\d+\.\s*/)
+    .map((s) => s.trim().replace(/[.;\s]+$/, ""))
+    .filter((s) => s.length > 0);
+  if (parts.length === 0) return "";
+  const lowered = parts.map(lowerFirst);
+  if (lowered.length === 1) return `To apply, ${lowered[0]}.`;
+  // The last step often already contains ", then ...": turn it into
+  // ", followed by ..." so the sentence flows.
+  const last = lowered[lowered.length - 1];
+  const split = last.split(/,\s*then\s+/i);
+  if (split.length > 1) {
+    const steps = [...lowered.slice(0, -1), split[0]];
+    return `To apply, ${steps.join(", ")}, followed by ${split[1]}.`;
+  }
+  return `To apply, ${lowered.slice(0, -1).join(", ")}, then ${lowered[lowered.length - 1]}.`;
+}
+
+/** One clean sentence per deal: title, the value that matters, the
+ *  deadline, and the official source link. */
 function dealLine(d: ResolvedDeal): string {
-  return `- **${clean(d.title)}**: ${truncate(clean(d.estimatedValue), 80)}, closes ${deadlineText(d)}. [Official source](${d.sourceUrl})`;
+  const value = shorten(valueClause(d), 90).replace(/[.;\s]+$/, "");
+  return `- **${clean(d.title)}**: ${value}. ${closesClause(d)}. [Official source](${d.sourceUrl})`;
+}
+
+/** Short title for comparison sentences: drop parentheticals and any
+ *  subtitle after a dash, when the first part stands on its own. */
+function shortTitle(d: ResolvedDeal): string {
+  const t = clean(d.title)
+    .replace(/\s*\([^)]*\)\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  for (const sep of [/\s+[—–-]\s+/, /,\s+/]) {
+    const parts = t.split(sep);
+    if (parts.length > 1 && parts[0].trim().split(/\s+/).length >= 3) {
+      return parts[0].trim();
+    }
+  }
+  return t;
+}
+
+const REGIONS: [RegExp, string][] = [
+  [/germany/i, "Germany"],
+  [/africa/i, "Africa"],
+  [/\buk\b/i, "the UK"],
+  [/europe/i, "Europe"],
+  [/usa|united states|america/i, "the USA"],
+  [/nigeria/i, "Nigeria"],
+  [/rwanda/i, "Rwanda"],
+  [/kenya/i, "Kenya"],
+  [/france/i, "France"],
+  [/hungary/i, "Hungary"],
+  [/canada/i, "Canada"],
+  [/china/i, "China"],
+  [/india/i, "India"],
+  [/australia/i, "Australia"],
+  [/worldwide|global/i, "anywhere in the world"],
+];
+
+/** The destination a listing is for, from its title and eligibility. */
+function dealRegion(d: ResolvedDeal): string | null {
+  const text = `${d.title} ${d.eligibility}`;
+  for (const [re, name] of REGIONS) if (re.test(text)) return name;
+  return null;
+}
+
+/** The closing sentence of a comparison: the real main difference,
+ *  destination first, then funding, then deadline. */
+function closingDifference(named: ScoredDeal[]): string {
+  const withRegion = named
+    .map((s) => ({ s, region: dealRegion(s.d) }))
+    .filter((x): x is { s: ScoredDeal; region: string } => x.region !== null);
+  const first = withRegion[0];
+  const other = withRegion.find((x) => x.region !== first?.region);
+  if (first && other) {
+    const inA =
+      first.region === "anywhere in the world"
+        ? "open anywhere in the world"
+        : `in ${first.region}`;
+    const inB =
+      other.region === "anywhere in the world"
+        ? "open anywhere in the world"
+        : `in ${other.region}`;
+    return `The main difference is destination: ${shortTitle(first.s.d)} is ${inA}, while ${shortTitle(other.s.d)} is ${inB}.`;
+  }
+  const valued = named
+    .filter((s) => s.d.valueUsd !== null)
+    .sort((a, b) => (b.d.valueUsd ?? 0) - (a.d.valueUsd ?? 0));
+  if (
+    valued.length >= 2 &&
+    valued[0].d.valueUsd !== valued[valued.length - 1].d.valueUsd
+  ) {
+    return `${shortTitle(valued[0].d)} lists the larger award at ${valueClause(valued[0].d)}.`;
+  }
+  const dated = named
+    .filter((s) => s.d.expiresOn)
+    .sort((a, b) => bySoonest(a.d, b.d));
+  if (
+    dated.length >= 2 &&
+    dated[0].d.expiresOn !== dated[dated.length - 1].d.expiresOn
+  ) {
+    return `${shortTitle(dated[0].d)} closes first, on ${formatDate(dated[0].d.expiresOn as string)}, while ${shortTitle(dated[dated.length - 1].d)} runs until ${formatDate(dated[dated.length - 1].d.expiresOn as string)}.`;
+  }
+  return "They differ mainly in eligibility and focus, so check the official source for the one that fits you.";
 }
 
 function bySoonest(a: ResolvedDeal, b: ResolvedDeal): number {
@@ -172,37 +471,24 @@ function lowerFirst(text: string): string {
   return t.slice(0, first) + t[first].toLowerCase() + t.slice(first + 1);
 }
 
-/** One sentence saying who the opportunity is for. Eligibility text
- *  that starts with "Open to" becomes "It is for ..."; anything else
- *  stands as its own sentence. */
-function whoItIsFor(d: ResolvedDeal): string {
-  const elig = truncate(clean(d.eligibility), 200).replace(/[.;\s]+$/, "");
-  if (!elig) return "";
-  const m = elig.match(/^open to\s+/i);
-  if (m) return `It is for ${lowerFirst(elig.slice(m[0].length))}.`;
-  return `${elig}.`;
-}
-
-/** Full brief of one deal, written like an assistant answering: a
- *  natural opening, the key facts in clean sentences, and the
- *  official source on its own line. Not a dump of field labels. */
+/** Full brief of one deal, written as natural prose: an opening that
+ *  says what it is and who it is for, the value in plain words, the
+ *  deadline, who it is for and what it takes in one merged sentence,
+ *  the steps as flowing prose, and the official source on its own
+ *  line. Never opens with a raw field value and never prints
+ *  eligibility and requirements back to back. */
 function singleDealReply(d: ResolvedDeal): string {
-  const lines: string[] = [`**${clean(d.title)}**`, ""];
-  const value = clean(d.estimatedValue).trim().replace(/[.;\s]+$/, "");
-  if (value) lines.push(`${value}.`);
-  lines.push(
-    d.expiresOn
-      ? `Applications close on ${deadlineText(d)}.`
-      : "No closing date is listed.",
-  );
-  const who = whoItIsFor(d);
-  if (who) lines.push(who);
-  const req = truncate(clean(d.requirements), 250).replace(/[.;\s]+$/, "");
-  if (req) lines.push(`${req}.`);
-  const steps = truncate(clean(d.actionSteps), 300).replace(/[.;\s]+$/, "");
-  if (steps) lines.push(`To apply, ${lowerFirst(steps)}.`);
-  lines.push("", `Official source: ${d.sourceUrl}`);
-  return lines.join("\n");
+  const title = clean(d.title);
+  const body = [
+    `The **${title}** is a free ${dealNoun(d)}.`,
+    valueSentence(d),
+    deadlineSentence(d),
+  ];
+  const who = whoSentence(d);
+  if (who) body.push(who);
+  const steps = stepsProse(d);
+  if (steps) body.push(steps);
+  return `${body.join(" ")}\n\nOfficial source: ${d.sourceUrl}`;
 }
 
 type DealField = "deadline" | "value" | "requirements" | "steps";
@@ -218,73 +504,40 @@ function detectField(question: string): DealField | null {
 
 function fieldReply(d: ResolvedDeal, field: DealField): string {
   const title = `**${clean(d.title)}**`;
-  const value = clean(d.estimatedValue).trim().replace(/[.;\s]+$/, "");
-  const deadlineLine = d.expiresOn
-    ? `Applications close on ${deadlineText(d)}.`
-    : "No closing date is listed.";
   switch (field) {
     case "deadline":
-      return `${title}\n\n${deadlineLine}${value ? ` ${value}.` : ""}\n\nOfficial source: ${d.sourceUrl}`;
+      return `${title}\n\n${deadlineSentence(d)} ${valueSentence(d)}\n\nOfficial source: ${d.sourceUrl}`;
     case "value":
-      return `${title}\n\n${value ? `${value}. ` : ""}${deadlineLine}\n\nOfficial source: ${d.sourceUrl}`;
+      return `${title}\n\n${valueSentence(d)} ${deadlineSentence(d)}\n\nOfficial source: ${d.sourceUrl}`;
     case "requirements": {
-      const who = whoItIsFor(d);
-      const req = truncate(clean(d.requirements), 250).replace(/[.;\s]+$/, "");
-      return `${title}\n\n${who ? `${who} ` : ""}${req ? `${req}.` : ""}\n\nOfficial source: ${d.sourceUrl}`;
+      const who = whoSentence(d);
+      return `${title}\n\n${who ? `${who} ` : ""}${deadlineSentence(d)}\n\nOfficial source: ${d.sourceUrl}`;
     }
     case "steps": {
-      const steps = truncate(clean(d.actionSteps), 300).replace(/[.;\s]+$/, "");
-      return `${title}\n\n${steps ? `To apply, ${lowerFirst(steps)}. ` : ""}${deadlineLine}\n\nOfficial source: ${d.sourceUrl}`;
+      const steps = stepsProse(d);
+      return `${title}\n\n${steps ? `${steps} ` : ""}${deadlineSentence(d)}\n\nOfficial source: ${d.sourceUrl}`;
     }
   }
 }
 
 const COMPARISON_RE = /\bcompare\b|\bvs\.?\b|versus|which is better|difference between/i;
 
-/** Side-by-side facts for each named deal, in a tidy layout with
+/** Side-by-side facts for each named deal, in tidy blocks with
  *  matching facts per deal, plus one closing sentence on the main
  *  difference. No winner is picked. */
 function comparisonReply(named: ScoredDeal[]): string {
   const lines = ["Here is how they compare:", ""];
   for (const s of named) {
     const d = s.d;
-    const value = clean(d.estimatedValue).trim().replace(/[.;\s]+$/, "");
-    const elig = truncate(clean(d.eligibility), 120).replace(/[.;\s]+$/, "");
     lines.push(`**${clean(d.title)}**`);
-    if (value) lines.push(`${value}.`);
-    lines.push(
-      d.expiresOn ? `Closes ${deadlineText(d)}.` : "No closing date is listed.",
-    );
-    if (elig) lines.push(`${elig}.`);
+    lines.push(`${valueSentence(d)} ${deadlineSentence(d)}`);
+    const a = audienceClause(d);
+    if (a) {
+      lines.push(/^open in\b/i.test(a) ? `It is ${a}.` : `It is for ${a}.`);
+    }
     lines.push(`[Official source](${d.sourceUrl})`, "");
   }
-  const dated = named
-    .filter((s) => s.d.expiresOn)
-    .sort((a, b) => bySoonest(a.d, b.d));
-  if (
-    dated.length >= 2 &&
-    dated[0].d.expiresOn !== dated[dated.length - 1].d.expiresOn
-  ) {
-    lines.push(
-      `${clean(dated[0].d.title)} closes first, on ${formatDate(dated[0].d.expiresOn as string)}, while ${clean(dated[dated.length - 1].d.title)} runs until ${formatDate(dated[dated.length - 1].d.expiresOn as string)}.`,
-    );
-  } else {
-    const valued = named
-      .filter((s) => s.d.valueUsd !== null)
-      .sort((a, b) => (b.d.valueUsd ?? 0) - (a.d.valueUsd ?? 0));
-    if (
-      valued.length >= 2 &&
-      valued[0].d.valueUsd !== valued[valued.length - 1].d.valueUsd
-    ) {
-      lines.push(
-        `${clean(valued[0].d.title)} lists the highest value at ${clean(valued[0].d.estimatedValue)}.`,
-      );
-    } else {
-      lines.push(
-        "They differ mainly in eligibility and focus, so check the official source for the one that fits you.",
-      );
-    }
-  }
+  lines.push(closingDifference(named));
   return lines.join("\n").trimEnd();
 }
 
@@ -735,6 +988,29 @@ export function tryDeterministic(
 }
 
 /* ------------------------------------------------------------------ */
+/* Model reply quality gate                                          */
+/* ------------------------------------------------------------------ */
+
+// First-to-answer must not win when its answer is worse: a reply
+// that is too short, ends mid-sentence, or names no source link is
+// rejected and the race continues to the next finisher.
+export function isGoodModelReply(reply: string): {
+  ok: boolean;
+  reason: string;
+} {
+  const r = reply.trim();
+  if (r.length < 150) return { ok: false, reason: "too short" };
+  const endsWithLink =
+    /\]\(https?:\/\/[^\s)]+\)\s*$/.test(r) || /\bhttps?:\/\/\S+\s*$/.test(r);
+  const last = r[r.length - 1];
+  if (!endsWithLink && last !== "." && last !== "!" && last !== "?") {
+    return { ok: false, reason: "ends mid-sentence" };
+  }
+  if (!r.includes("http")) return { ok: false, reason: "no source link" };
+  return { ok: true, reason: "" };
+}
+
+/* ------------------------------------------------------------------ */
 /* Smarter shortlist for judgment questions                          */
 /* ------------------------------------------------------------------ */
 
@@ -1055,10 +1331,10 @@ function compactJudgmentDeal(d: ResolvedDeal) {
     title: d.title,
     track: d.track,
     value: d.estimatedValue,
-    eligibility: truncate(d.eligibility, 70),
+    eligibility: shorten(d.eligibility, 70),
     expiresOn: d.expiresOn,
     sourceUrl: d.sourceUrl,
-    requirements: truncate(d.requirements, 60),
+    requirements: shorten(d.requirements, 60),
   };
 }
 

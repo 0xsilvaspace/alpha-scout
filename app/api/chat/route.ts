@@ -9,6 +9,7 @@ import {
   buildSnapshot,
   countsSummary,
   isBroadQuestion,
+  isGoodModelReply,
   isJudgmentQuestion,
   rankDeals,
   rankJudgmentShortlist,
@@ -21,7 +22,6 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GE
 const PRIMARY_MODEL = "google/gemma-4-31b-it:free";
 const FALLBACK_MODEL = "baidu/ernie-5.5-flash-preview:free";
 const SNAPSHOT_MAX_CHARS = 8000;
-const SNAPSHOT_RETRY_CHARS = 4000;
 const MAX_TOKENS_BROAD = 400;
 const MAX_TOKENS_DETAIL = 1500;
 const FETCH_TIMEOUT_MS = 9000;
@@ -419,12 +419,15 @@ export async function POST(req: Request) {
       { status: 502 },
     );
 
-  // Race: all three providers start at the same time and the first one
-  // to answer wins, aborting the losers. Waiting serially burned the
+  // Race: all three providers start at the same time, each with the
+  // same 8,000-char snapshot, and the first GOOD answer wins. A
+  // smaller snapshot for Gemma and Ernie let Ernie win by being
+  // fastest while seeing almost none of the shortlist, so first-to-
+  // answer no longer wins on its own: a reply that is too short,
+  // ends mid-sentence or names no source link is rejected and the
+  // race continues to the next finisher. Waiting serially burned the
   // whole budget on one slow attempt (Gemini timing out at 9s while
-  // OpenRouter 429ed), so nothing was left for a fallback. Racing all
-  // three means a single slow or rate-limited provider cannot sink the
-  // question on its own.
+  // OpenRouter 429ed), so nothing was left for a fallback.
   const chainStarted = Date.now();
   // Broad answers are short (counts plus one line per category), so a
   // small token cap keeps them fast enough to finish inside the timeout.
@@ -469,7 +472,7 @@ export async function POST(req: Request) {
       callOpenRouter(
         openRouterKey,
         PRIMARY_MODEL,
-        buildPrompt(SNAPSHOT_RETRY_CHARS),
+        buildPrompt(SNAPSHOT_MAX_CHARS),
         messages,
         raceTimeoutMs,
         maxTokens,
@@ -480,7 +483,7 @@ export async function POST(req: Request) {
       callOpenRouter(
         openRouterKey,
         FALLBACK_MODEL,
-        buildPrompt(SNAPSHOT_RETRY_CHARS),
+        buildPrompt(SNAPSHOT_MAX_CHARS),
         messages,
         raceTimeoutMs,
         maxTokens,
@@ -497,8 +500,26 @@ export async function POST(req: Request) {
       p.then((r) => {
         settled.push(r);
         if (r.ok && r.reply) {
-          raceController.abort();
-          resolve(r);
+          // First GOOD answer wins. A reply that fails the quality
+          // gate does not win; the race continues to the next
+          // finisher, and the rejection is logged with the reason.
+          const gate = isGoodModelReply(r.reply);
+          if (gate.ok) {
+            raceController.abort();
+            resolve(r);
+          } else {
+            console.error(
+              "[ask-scout] model reply rejected",
+              JSON.stringify({
+                model: r.model,
+                reason: gate.reason,
+                question: questionLog,
+                reply: r.reply.slice(0, 200),
+              }),
+            );
+            remaining -= 1;
+            if (remaining === 0) resolve(undefined);
+          }
         } else {
           remaining -= 1;
           if (remaining === 0) resolve(undefined);
