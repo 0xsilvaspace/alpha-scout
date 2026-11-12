@@ -2,6 +2,7 @@ interface StatsBarProps {
   activeCount: number;
   expiringCount: number;
   savedCount: number;
+  verifiedCount: number;
   lastSync: string;
   /** "live" = deals came from the GitHub feed; "snapshot" = baked-in fallback. */
   feedSource: "live" | "snapshot";
@@ -11,6 +12,7 @@ export default function StatsBar({
   activeCount,
   expiringCount,
   savedCount,
+  verifiedCount,
   lastSync,
   feedSource,
 }: StatsBarProps) {
@@ -49,6 +51,9 @@ export default function StatsBar({
         </div>
         <div className="mt-1 text-xs text-stone-500">
           Last updated: {lastSync}
+        </div>
+        <div className="mt-1 text-xs text-stone-500">
+          {verifiedCount} of {activeCount} sources vetted
         </div>
       </div>
     </div>

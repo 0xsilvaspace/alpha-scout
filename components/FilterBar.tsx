@@ -1,10 +1,18 @@
-import { Clock, Globe, MapPin, Search, ShieldCheck } from "lucide-react";
+import {
+  CheckCircle2,
+  Clock,
+  Globe,
+  MapPin,
+  Search,
+  ShieldCheck,
+} from "lucide-react";
 
 export interface Filters {
   nigeria: boolean;
   worldwide: boolean;
   freeNoCard: boolean;
   expiringSoon: boolean;
+  vettedOnly: boolean;
 }
 
 export const EMPTY_FILTERS: Filters = {
@@ -12,6 +20,7 @@ export const EMPTY_FILTERS: Filters = {
   worldwide: false,
   freeNoCard: false,
   expiringSoon: false,
+  vettedOnly: false,
 };
 
 interface FilterBarProps {
@@ -27,6 +36,7 @@ const TOGGLES: { key: keyof Filters; label: string; icon: typeof Globe }[] = [
   { key: "worldwide", label: "Worldwide", icon: Globe },
   { key: "freeNoCard", label: "Free, no card", icon: ShieldCheck },
   { key: "expiringSoon", label: "Closing soon", icon: Clock },
+  { key: "vettedOnly", label: "Vetted only", icon: CheckCircle2 },
 ];
 
 export default function FilterBar({

@@ -258,6 +258,10 @@ export default function Home() {
     () => activeDeals.filter(isExpiringSoon).length,
     [activeDeals],
   );
+  const verifiedCount = useMemo(
+    () => activeDeals.filter((d) => d.verification === "verified").length,
+    [activeDeals],
+  );
 
   const counts = useMemo(() => {
     const map = new Map<Tab, number>();
@@ -316,6 +320,7 @@ export default function Home() {
     if (filters.worldwide) base = base.filter(isWorldwide);
     if (filters.freeNoCard) base = base.filter((d) => d.costType === "truly-free");
     if (filters.expiringSoon) base = base.filter(isExpiringSoon);
+    if (filters.vettedOnly) base = base.filter((d) => d.verification === "verified");
     return base;
   }, [tab, grantFilter, search, filters, activeDeals, savedDeals]);
 
@@ -429,6 +434,7 @@ export default function Home() {
           activeCount={activeDeals.length}
           expiringCount={expiringCount}
           savedCount={savedDeals.length}
+          verifiedCount={verifiedCount}
           lastSync={lastSync}
           feedSource={feedSource}
         />

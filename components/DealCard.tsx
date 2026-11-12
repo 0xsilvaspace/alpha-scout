@@ -53,6 +53,15 @@ export default function DealCard({ deal, lastSync, saved = false, onToggleSave }
   // Risk notes come from the feed; a leading "URGENT:" marker is display
   // noise, so it is softened at render time without changing the data.
   const riskNote = clean(deal.riskNote.replace(/^URGENT:\s*/i, ""));
+  // Every card shows where the listing comes from, so the source is
+  // always visible and vetted status is never hidden.
+  const sourceHost = (() => {
+    try {
+      return new URL(deal.sourceUrl).hostname.replace(/^www\./, "");
+    } catch {
+      return deal.sourceUrl;
+    }
+  })();
   const trackBadge =
     deal.track === "grants"
       ? `Grants · ${deal.grantKind === "ai" ? "AI" : "Other"}`
@@ -110,10 +119,12 @@ export default function DealCard({ deal, lastSync, saved = false, onToggleSave }
         >
           {deal.verification === "verified" ? (
             <>
-              <CheckCircle2 className="h-3 w-3" /> Verified
+              <CheckCircle2 className="h-3 w-3" /> Source vetted
             </>
           ) : (
-            "Pending verification"
+            <>
+              <Clock className="h-3 w-3" /> Not yet vetted
+            </>
           )}
         </span>
         <button
@@ -155,19 +166,26 @@ export default function DealCard({ deal, lastSync, saved = false, onToggleSave }
           {eligibility}
         </p>
         {deal.track === "grants" ? (
-          <>
-            <p className="text-stone-600">
-              <span className="text-xs font-medium text-stone-500">
-                Funded by ·{" "}
-              </span>
-              <span className="font-semibold text-stone-900">{funder}</span>
-            </p>
-            {lastSync ? (
-              <p className="text-xs text-stone-500">
-                Source checked {lastSync}
-              </p>
-            ) : null}
-          </>
+          <p className="text-stone-600">
+            <span className="text-xs font-medium text-stone-500">
+              Funded by ·{" "}
+            </span>
+            <span className="font-semibold text-stone-900">{funder}</span>
+          </p>
+        ) : null}
+        <p className="text-stone-600">
+          <span className="text-xs font-medium text-stone-500">
+            Source ·{" "}
+          </span>
+          {sourceHost}
+        </p>
+        {lastSync ? (
+          <p className="text-xs text-stone-500">
+            Source checked {lastSync}
+            {deal.verification === "verified"
+              ? " · vetted against the official page"
+              : " · not yet vetted, check the official page before applying"}
+          </p>
         ) : null}
         <p
           className={
