@@ -22,6 +22,7 @@ const STOPWORDS = new Set([
   "list", "show", "give", "tell", "please", "open", "free", "any",
   "all", "can", "you", "your", "our", "out", "into", "more", "some",
   "does", "like", "need", "want", "get", "also", "still", "available",
+  "site", "listed", "opportunity", "opportunities", "page",
 ]);
 
 const DEADLINE_WORDS = /\b(deadline|deadlines|closing|closes|close|expir|expires|expiry|due|soon|running out|last date)\b/i;
@@ -138,6 +139,53 @@ function todayLine(): string {
   return `Today is ${fmt({ weekday: "long" })} ${fmt({ day: "numeric" })} ${fmt({ month: "long" })} ${fmt({ year: "numeric" })}.`;
 }
 
+/** Counts of the full list, by track. */
+function trackCounts(deals: ResolvedDeal[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const d of deals) {
+    counts.set(d.track, (counts.get(d.track) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Tracks ordered by count, largest first (the counts order). */
+function trackOrder(deals: ResolvedDeal[]): string[] {
+  return [...trackCounts(deals).entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([track]) => track);
+}
+
+/** How many deals match the question's keywords at all. */
+function matchedDealCount(deals: ResolvedDeal[], question: string): number {
+  const tokens = tokenize(question);
+  let n = 0;
+  for (const d of deals) {
+    if (scoreDeal(d, tokens) > 0) n += 1;
+  }
+  return n;
+}
+
+/** A broad question asks about the whole list without naming a deadline,
+ *  a track or a programme: fewer than 5 deals match its keywords. */
+function isBroadQuestion(deals: ResolvedDeal[], question: string): boolean {
+  if (DEADLINE_WORDS.test(question)) return false;
+  return matchedDealCount(deals, question) < 5;
+}
+
+/** One short example per display track (title, track, expiry only),
+ *  ordered by the counts order. Used for broad questions only, so the
+ *  model sees the shape of the list without a long ranked sample. */
+function buildBroadSnapshot(deals: ResolvedDeal[]): string {
+  const entries: { title: string; track: string; expiresOn: string | null }[] = [];
+  for (const track of trackOrder(deals)) {
+    const inTrack = deals.filter((d) => d.track === track);
+    inTrack.sort((a, b) => (daysLeft(a) ?? 99) - (daysLeft(b) ?? 99));
+    const d = inTrack[0];
+    if (d) entries.push({ title: d.title, track: d.track, expiresOn: d.expiresOn });
+  }
+  return JSON.stringify(entries);
+}
+
 /** Counts of the full list, by track, for the counts summary. */
 const TRACK_LABELS: Record<string, string> = {
   scholarships: "scholarships",
@@ -153,13 +201,10 @@ const TRACK_LABELS: Record<string, string> = {
 };
 
 function countsSummary(deals: ResolvedDeal[]): string {
-  const counts = new Map<string, number>();
-  for (const d of deals) {
-    counts.set(d.track, (counts.get(d.track) ?? 0) + 1);
-  }
-  const parts = [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([track, n]) => `${n} ${TRACK_LABELS[track] ?? track}`);
+  const counts = trackCounts(deals);
+  const parts = trackOrder(deals).map(
+    (track) => `${counts.get(track)} ${TRACK_LABELS[track] ?? track}`,
+  );
   return `The full list has ${deals.length} opportunities: ${parts.join(", ")}.`;
 }
 
@@ -335,7 +380,7 @@ export async function POST(req: Request) {
       role: m.role as "user" | "assistant",
       content: (m.content as string).slice(0, 500),
     }))
-    .slice(-10);
+    .slice(-6);
   if (messages.length === 0 || messages[messages.length - 1].role !== "user") {
     return NextResponse.json(
       { error: "Send a message to ask Scout." },
@@ -348,13 +393,17 @@ export async function POST(req: Request) {
   // Same list the site displays: dedupe and re-classify first, so the
   // counts, ranking and snapshot all describe the same opportunities.
   const deals = prepareDeals(await loadDeals());
-  const ranked = rankDeals(deals, question);
+  const broad = isBroadQuestion(deals, question);
+  const ranked = broad ? [] : rankDeals(deals, question);
 
-  const systemBase = [
+  const systemIntro = [
     "You are Scout, the assistant for Alpha Scout, a site that lists free opportunities open to Nigeria: scholarships, grants, hackathons, competitions, remote jobs and free tools.",
     todayLine(),
     "Use that date when judging what is closing soon or already closed. Do not guess the date.",
     "Answer only from the opportunity list below. Summarize opportunities and brief the user on requirements, eligibility, deadlines, action steps and the official source.",
+  ];
+  const systemSpecific = [
+    ...systemIntro,
     "When the user asks about the whole list, use the counts line above the list to report the totals, and summarize by category instead of listing every item one by one. The list below is only a sample of the full list, ranked for this question.",
     "The ranked sample below is drawn from the same list the counts describe, and earlier answers in this conversation came from that same list, so do not retract or second-guess them when the sample shows only part of the list.",
     "Never invent details, values or deadlines. If the list does not contain the answer, say so plainly and suggest checking the official source.",
@@ -362,8 +411,20 @@ export async function POST(req: Request) {
     "Keep answers short and plain.",
     "Opportunities:",
   ].join("\n");
+  const systemBroad = [
+    ...systemIntro,
+    `There are ${deals.length} opportunities in total (counts below). The entries below are ONE EXAMPLE per category, not the whole list. Use the counts for any totals. Never say a category is absent when its count is above zero, and never describe the sample as the whole list.`,
+    "If an earlier answer in this conversation disagrees with the counts line above, the counts line is correct.",
+    "Summarize by category using the counts. Do not list every item one by one, and do not go into detail on the example entries.",
+    "Never invent details, values or deadlines. If the list does not contain the answer, say so plainly and suggest checking the official source.",
+    "The example entries below have no source links, so do not invent any. Only mention a source link when it is shown in the list.",
+    "Keep answers short and plain.",
+    "Opportunities:",
+  ].join("\n");
   const buildPrompt = (maxChars: number) =>
-    `${systemBase}\n${countsSummary(deals)}\n${buildSnapshot(ranked, maxChars)}`;
+    broad
+      ? `${systemBroad}\n${countsSummary(deals)}\n${buildBroadSnapshot(deals)}`
+      : `${systemSpecific}\n${countsSummary(deals)}\n${buildSnapshot(ranked, maxChars)}`;
 
   const fail = () =>
     NextResponse.json(
