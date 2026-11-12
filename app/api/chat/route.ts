@@ -3,14 +3,12 @@ import { getServerSupabase } from "@/lib/supabase/server";
 import { ALL_DEALS, daysLeft, type Deal } from "@/lib/deals";
 import { FEED_URL } from "@/lib/feed";
 
-const MODEL = "google/gemma-4-26b-a4b-it:free";
+const PRIMARY_MODEL = "google/gemma-4-31b-it:free";
+const FALLBACK_MODEL = "baidu/ernie-5.5-flash-preview:free";
 const SNAPSHOT_MAX_CHARS = 8000;
 const SNAPSHOT_RETRY_CHARS = 4000;
 const MAX_TOKENS = 700;
 const FETCH_TIMEOUT_MS = 9000;
-// Vercel Hobby functions are cut off after about 10s, so a retry only
-// starts when the first attempt failed fast enough to leave room for it.
-const RETRY_TIME_BUDGET_MS = 5000;
 
 interface IncomingMessage {
   role?: unknown;
@@ -180,10 +178,12 @@ interface CallResult {
   errorSnippet: string;
   aborted: boolean;
   elapsedMs: number;
+  model: string;
 }
 
 async function callOpenRouter(
   apiKey: string,
+  model: string,
   systemPrompt: string,
   messages: { role: "user" | "assistant"; content: string }[],
 ): Promise<CallResult> {
@@ -198,7 +198,7 @@ async function callOpenRouter(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: MODEL,
+        model,
         max_tokens: MAX_TOKENS,
         messages: [{ role: "system", content: systemPrompt }, ...messages],
       }),
@@ -213,6 +213,7 @@ async function callOpenRouter(
         errorSnippet: text.slice(0, 200),
         aborted: false,
         elapsedMs,
+        model,
       };
     }
     const data: unknown = await res.json();
@@ -229,9 +230,10 @@ async function callOpenRouter(
         errorSnippet: "empty reply",
         aborted: false,
         elapsedMs,
+        model,
       };
     }
-    return { ok: true, reply: reply.trim(), status: res.status, errorSnippet: "", aborted: false, elapsedMs };
+    return { ok: true, reply: reply.trim(), status: res.status, errorSnippet: "", aborted: false, elapsedMs, model };
   } catch (err) {
     return {
       ok: false,
@@ -241,6 +243,7 @@ async function callOpenRouter(
         : String(err).slice(0, 200),
       aborted: controller.signal.aborted,
       elapsedMs: Date.now() - started,
+      model,
     };
   } finally {
     clearTimeout(timer);
@@ -328,13 +331,14 @@ export async function POST(req: Request) {
       { status: 502 },
     );
 
-  const first = await callOpenRouter(apiKey, buildPrompt(SNAPSHOT_MAX_CHARS), messages);
+  const first = await callOpenRouter(apiKey, PRIMARY_MODEL, buildPrompt(SNAPSHOT_MAX_CHARS), messages);
   if (first.ok && first.reply) {
     return NextResponse.json({ reply: first.reply });
   }
   console.error(
     "[ask-scout] openrouter failed",
     JSON.stringify({
+      model: first.model,
       status: first.status,
       aborted: first.aborted,
       elapsedMs: first.elapsedMs,
@@ -343,18 +347,23 @@ export async function POST(req: Request) {
     }),
   );
 
-  // One retry on rate limiting or a server error, with a smaller snapshot,
-  // and only when the first attempt failed fast enough to leave time for it.
+  // One retry with the fallback model and a smaller snapshot, on rate
+  // limiting, a server error, a timeout, a failed fetch or an empty reply.
   const retriable =
-    first.status === 429 || first.status >= 500;
-  if (retriable && first.elapsedMs < RETRY_TIME_BUDGET_MS) {
-    const second = await callOpenRouter(apiKey, buildPrompt(SNAPSHOT_RETRY_CHARS), messages);
+    first.status === 429 ||
+    first.status >= 500 ||
+    first.status === 0 ||
+    first.aborted ||
+    first.errorSnippet === "empty reply";
+  if (retriable) {
+    const second = await callOpenRouter(apiKey, FALLBACK_MODEL, buildPrompt(SNAPSHOT_RETRY_CHARS), messages);
     if (second.ok && second.reply) {
       return NextResponse.json({ reply: second.reply });
     }
     console.error(
       "[ask-scout] openrouter retry failed",
       JSON.stringify({
+        model: second.model,
         status: second.status,
         aborted: second.aborted,
         elapsedMs: second.elapsedMs,
