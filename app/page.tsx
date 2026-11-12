@@ -2,18 +2,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  AppWindow,
   Archive,
   Banknote,
   Bot,
   Briefcase,
+  CalendarClock,
   Cloud,
   Coins,
   GraduationCap,
-  Image,
+  HandCoins,
   LayoutGrid,
-  AppWindow,
   Radar,
-  Siren,
+  Trophy,
 } from "lucide-react";
 import {
   ALL_DEALS,
@@ -22,34 +23,47 @@ import {
   isExpiringSoon,
   isOpenToNigeria,
   isWorldwide,
-  totalValue,
-  TRACK_LABELS,
   type Deal,
-  type Track,
 } from "@/lib/deals";
+import {
+  DISPLAY_LABELS,
+  prepareDeals,
+  type DisplayTrack,
+  type GrantKind,
+  type ResolvedDeal,
+} from "@/lib/classify";
 import { fetchLiveFeed } from "@/lib/feed";
 import StatsBar from "@/components/StatsBar";
 import FilterBar, { EMPTY_FILTERS, type Filters } from "@/components/FilterBar";
 import DealCard from "@/components/DealCard";
 
-type Tab = "all" | Track | "expiring" | "archive";
+type Tab = "all" | DisplayTrack | "expiring" | "archive";
+type GrantFilter = "all" | GrantKind;
 
 const TABS: { id: Tab; label: string; icon: typeof LayoutGrid }[] = [
   { id: "all", label: "All", icon: LayoutGrid },
-  { id: "ai-tools", label: "AI Tools", icon: Bot },
-  { id: "crypto", label: "Crypto Airdrops", icon: Coins },
-  { id: "nfts", label: "NFTs", icon: Image },
   { id: "scholarships", label: "Scholarships", icon: GraduationCap },
+  { id: "grants", label: "Grants", icon: HandCoins },
+  { id: "ai-tools", label: "AI Tools", icon: Bot },
+  { id: "hackathons", label: "Hackathons", icon: Trophy },
   { id: "jobs", label: "Remote Jobs", icon: Briefcase },
-  { id: "banking", label: "U-Cards / Banking", icon: Banknote },
-  { id: "cloud", label: "VPS / Cloud", icon: Cloud },
+  { id: "cloud", label: "Cloud", icon: Cloud },
   { id: "software", label: "Software", icon: AppWindow },
-  { id: "expiring", label: "Expiry Alert", icon: Siren },
+  { id: "banking", label: "Banking", icon: Banknote },
+  { id: "crypto", label: "Crypto", icon: Coins },
+  { id: "expiring", label: "Expiring soon", icon: CalendarClock },
   { id: "archive", label: "Archive", icon: Archive },
+];
+
+const GRANT_FILTERS: { id: GrantFilter; label: string }[] = [
+  { id: "all", label: "All grants" },
+  { id: "ai", label: "AI grants" },
+  { id: "other", label: "Other grants" },
 ];
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>("all");
+  const [grantFilter, setGrantFilter] = useState<GrantFilter>("all");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [lastSync, setLastSync] = useState("—");
@@ -83,24 +97,37 @@ export default function Home() {
     };
   }, []);
 
-  const activeDeals = useMemo(() => deals.filter(isActive), [deals]);
-  const archivedDeals = useMemo(() => deals.filter(isExpired), [deals]);
+  // One load path for both sources: dedupe, then re-classify into the
+  // display tracks (Grants, Hackathons, Crypto last). Each opportunity
+  // appears exactly once, in exactly one tab.
+  const prepared: ResolvedDeal[] = useMemo(() => prepareDeals(deals), [deals]);
+
+  const activeDeals = useMemo(() => prepared.filter(isActive), [prepared]);
+  const archivedDeals = useMemo(() => prepared.filter(isExpired), [prepared]);
   const expiringCount = useMemo(
     () => activeDeals.filter(isExpiringSoon).length,
     [activeDeals],
   );
-  const trackedValue = useMemo(() => totalValue(activeDeals), [activeDeals]);
 
   const counts = useMemo(() => {
     const map = new Map<Tab, number>();
     map.set("all", activeDeals.length);
     map.set("expiring", expiringCount);
     map.set("archive", archivedDeals.length);
-    (Object.keys(TRACK_LABELS) as Track[]).forEach((t) => {
+    (Object.keys(DISPLAY_LABELS) as DisplayTrack[]).forEach((t) => {
       map.set(t, activeDeals.filter((d) => d.track === t).length);
     });
     return map;
   }, [activeDeals, archivedDeals, expiringCount]);
+
+  const grantCounts = useMemo(() => {
+    const grants = activeDeals.filter((d) => d.track === "grants");
+    return {
+      all: grants.length,
+      ai: grants.filter((d) => d.grantKind === "ai").length,
+      other: grants.filter((d) => d.grantKind === "other").length,
+    };
+  }, [activeDeals]);
 
   const visible = useMemo(() => {
     let base =
@@ -112,10 +139,14 @@ export default function Home() {
             ? archivedDeals
             : activeDeals.filter((d) => d.track === tab);
 
+    if (tab === "grants" && grantFilter !== "all") {
+      base = base.filter((d) => d.grantKind === grantFilter);
+    }
+
     const q = search.trim().toLowerCase();
     if (q) {
       base = base.filter((d) =>
-        [d.title, d.eligibility, d.requirements, d.estimatedValue, d.riskNote]
+        [d.title, d.eligibility, d.requirements, d.estimatedValue, d.riskNote, d.funder]
           .join(" ")
           .toLowerCase()
           .includes(q),
@@ -126,7 +157,7 @@ export default function Home() {
     if (filters.freeNoCard) base = base.filter((d) => d.costType === "truly-free");
     if (filters.expiringSoon) base = base.filter(isExpiringSoon);
     return base;
-  }, [tab, search, filters, activeDeals, archivedDeals]);
+  }, [tab, grantFilter, search, filters, activeDeals, archivedDeals]);
 
   const toggleFilter = (key: keyof Filters) =>
     setFilters((f) => ({ ...f, [key]: !f[key] }));
@@ -160,7 +191,6 @@ export default function Home() {
       <main className="mx-auto max-w-7xl space-y-4 px-4 py-5">
         <StatsBar
           activeCount={activeDeals.length}
-          totalValue={trackedValue}
           expiringCount={expiringCount}
           archivedCount={archivedDeals.length}
           lastSync={lastSync}
@@ -178,7 +208,10 @@ export default function Home() {
               <button
                 key={id}
                 type="button"
-                onClick={() => setTab(id)}
+                onClick={() => {
+                  setTab(id);
+                  if (id !== "grants") setGrantFilter("all");
+                }}
                 aria-pressed={active}
                 className={
                   "flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-2 font-mono text-xs font-semibold whitespace-nowrap " +
@@ -201,6 +234,35 @@ export default function Home() {
             );
           })}
         </nav>
+
+        {tab === "grants" ? (
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Grant types">
+            {GRANT_FILTERS.filter((g) => grantCounts[g.id] > 0).map(
+              ({ id, label }) => {
+                const active = grantFilter === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setGrantFilter(id)}
+                    className={
+                      "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-mono text-xs font-semibold " +
+                      (active
+                        ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-300"
+                        : "border-zinc-700 bg-zinc-950 text-zinc-300 hover:border-zinc-500")
+                    }
+                  >
+                    {label}
+                    <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+                      {grantCounts[id]}
+                    </span>
+                  </button>
+                );
+              },
+            )}
+          </div>
+        ) : null}
 
         <FilterBar
           search={search}
@@ -252,10 +314,9 @@ export default function Home() {
             “activation” fee for a listing marked free.
           </p>
           <p className="mt-2 font-mono text-[11px]">
-            ALPHA SCOUT · 21 deals seeded from the ALPHA SCOUT Space scan of
-            11 Nov 2026 · Live deals feed refreshes from GitHub every 4
-            hours; if the feed is unreachable the page shows the baked-in
-            offline snapshot instead.
+            ALPHA SCOUT · {activeDeals.length} active deals · Live deals feed
+            refreshes from GitHub every 4 hours; if the feed is unreachable
+            the page shows the baked-in offline snapshot instead.
           </p>
         </footer>
       </main>

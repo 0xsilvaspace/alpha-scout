@@ -1,9 +1,7 @@
-import { Activity, DollarSign, Layers, Timer } from "lucide-react";
-import { formatUsd } from "@/lib/deals";
+import { Activity, Layers, Timer } from "lucide-react";
 
 interface StatsBarProps {
   activeCount: number;
-  totalValue: number;
   expiringCount: number;
   archivedCount: number;
   lastSync: string;
@@ -13,14 +11,13 @@ interface StatsBarProps {
 
 export default function StatsBar({
   activeCount,
-  totalValue,
   expiringCount,
   archivedCount,
   lastSync,
   feedSource,
 }: StatsBarProps) {
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
         <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-widest text-zinc-500">
           <Layers className="h-3.5 w-3.5 text-emerald-400" />
@@ -28,27 +25,14 @@ export default function StatsBar({
         </div>
         <div className="mt-2 font-mono text-3xl font-bold text-zinc-50">{activeCount}</div>
         <div className="mt-1 text-xs text-zinc-500">
-          {archivedCount} archived · {expiringCount} expiring soon
-        </div>
-      </div>
-
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
-        <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-widest text-zinc-500">
-          <DollarSign className="h-3.5 w-3.5 text-emerald-400" />
-          Total value tracked
-        </div>
-        <div className="mt-2 font-mono text-3xl font-bold text-emerald-400 glow-text">
-          {formatUsd(totalValue)}
-        </div>
-        <div className="mt-1 text-xs text-zinc-500">
-          Sum of USD values where stated; benefit-only deals excluded
+          {archivedCount} archived · {expiringCount} closing soon
         </div>
       </div>
 
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
         <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-widest text-zinc-500">
           <Timer className="h-3.5 w-3.5 text-amber-400" />
-          Expiring soon
+          Closing soon
         </div>
         <div className="mt-2 font-mono text-3xl font-bold text-amber-300">{expiringCount}</div>
         <div className="mt-1 text-xs text-zinc-500">Deals closing within 48 hours</div>

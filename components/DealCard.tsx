@@ -17,20 +17,29 @@ import {
   formatUsd,
   isExpiringSoon,
   parseSteps,
-  TRACK_LABELS,
-  type Deal,
 } from "@/lib/deals";
+import {
+  DISPLAY_LABELS,
+  type ResolvedDeal,
+} from "@/lib/classify";
 
 interface DealCardProps {
-  deal: Deal;
+  deal: ResolvedDeal;
 }
 
 export default function DealCard({ deal }: DealCardProps) {
   const [open, setOpen] = useState(false);
   const [reported, setReported] = useState(false);
   const dLeft = daysLeft(deal);
-  const urgent = isExpiringSoon(deal);
+  const closingSoon = isExpiringSoon(deal);
   const steps = parseSteps(deal.actionSteps);
+  // Risk notes come from the feed; a leading "URGENT:" marker is display
+  // noise, so it is softened at render time without changing the data.
+  const riskNote = deal.riskNote.replace(/^URGENT:\s*/i, "");
+  const trackBadge =
+    deal.track === "grants"
+      ? `Grants · ${deal.grantKind === "ai" ? "AI" : "Other"}`
+      : DISPLAY_LABELS[deal.track];
 
   const expiryText =
     dLeft === null
@@ -47,14 +56,14 @@ export default function DealCard({ deal }: DealCardProps) {
     <article
       className={
         "flex flex-col rounded-lg border bg-zinc-900/80 p-4 transition-colors " +
-        (urgent
+        (closingSoon
           ? "border-amber-500/50 shadow-[0_0_24px_rgba(245,158,11,0.12)]"
           : "border-zinc-800 hover:border-emerald-500/40")
       }
     >
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-emerald-300">
-          {TRACK_LABELS[deal.track]}
+          {trackBadge}
         </span>
         <span
           className={
@@ -112,13 +121,21 @@ export default function DealCard({ deal }: DealCardProps) {
           </span>
           {deal.eligibility}
         </p>
+        {deal.track === "grants" ? (
+          <p className="text-zinc-400">
+            <span className="font-mono text-[11px] uppercase tracking-wider text-zinc-500">
+              Funded by ·{" "}
+            </span>
+            <span className="font-semibold text-zinc-200">{deal.funder}</span>
+          </p>
+        ) : null}
         <p
           className={
             "flex items-center gap-1.5 font-mono text-xs " +
-            (urgent ? "font-bold text-amber-300" : "text-zinc-400")
+            (closingSoon ? "font-bold text-amber-300" : "text-zinc-400")
           }
         >
-          {urgent ? (
+          {closingSoon ? (
             <Clock className="h-3.5 w-3.5" />
           ) : (
             <CalendarClock className="h-3.5 w-3.5" />
@@ -132,10 +149,10 @@ export default function DealCard({ deal }: DealCardProps) {
           </span>
           {deal.requirements}
         </p>
-        {deal.riskNote ? (
+        {riskNote ? (
           <p className="flex items-start gap-1.5 rounded border border-zinc-800 bg-zinc-950/70 p-2 text-xs text-zinc-400">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
-            <span>{deal.riskNote}</span>
+            <span>{riskNote}</span>
           </p>
         ) : null}
       </div>

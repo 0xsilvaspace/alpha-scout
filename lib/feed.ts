@@ -6,7 +6,9 @@
  * The repo's deals.json is refreshed by a scheduled sync (every 4h) from
  * the ALPHA SCOUT Space's 2-hour scan, so the live site updates without
  * a redeploy. Until that repo exists / the fetch succeeds, the app falls
- * back silently to the baked-in snapshot in lib/deals.ts.
+ * back silently to the baked-in snapshot in lib/deals.ts. Either way,
+ * page.tsx runs the deals through prepareDeals (lib/classify.ts), which
+ * dedupes them and re-classifies them into the display tracks.
  */
 
 import type { Deal } from "./deals";

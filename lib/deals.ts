@@ -44,17 +44,6 @@ export interface Deal {
   status: "active";
 }
 
-export const TRACK_LABELS: Record<Track, string> = {
-  scholarships: "Scholarships",
-  jobs: "Remote Jobs",
-  "ai-tools": "AI Tools",
-  crypto: "Crypto Airdrops",
-  nfts: "NFTs",
-  banking: "U-Cards / Banking",
-  cloud: "VPS / Cloud",
-  software: "Software",
-};
-
 export const DEALS: Deal[] = [
   {
     id: 1,
@@ -3208,40 +3197,35 @@ function startOfToday(): Date {
 }
 
 /** Whole days from today until expiry. Null = Ongoing (no expiry). */
-export function daysLeft(deal: Deal): number | null {
+export function daysLeft(deal: Pick<Deal, "expiresOn">): number | null {
   if (!deal.expiresOn) return null;
   const expiry = new Date(`${deal.expiresOn}T00:00:00`);
   return Math.round((expiry.getTime() - startOfToday().getTime()) / DAY_MS);
 }
 
 /** Expired = it had a date and that date is before today. */
-export function isExpired(deal: Deal): boolean {
+export function isExpired(deal: Pick<Deal, "expiresOn">): boolean {
   const d = daysLeft(deal);
   return d !== null && d < 0;
 }
 
 /** Expiring soon = expires within 48h (0–2 days left, not already expired). */
-export function isExpiringSoon(deal: Deal): boolean {
+export function isExpiringSoon(deal: Pick<Deal, "expiresOn">): boolean {
   const d = daysLeft(deal);
   return d !== null && d >= 0 && d <= 2;
 }
 
-export function isActive(deal: Deal): boolean {
+export function isActive(deal: Pick<Deal, "expiresOn">): boolean {
   return !isExpired(deal);
 }
 
-/** Sum of valueUsd where present; deals with null valueUsd contribute $0. */
-export function totalValue(deals: Deal[]): number {
-  return deals.reduce((sum, d) => sum + (d.valueUsd ?? 0), 0);
-}
-
 /** "Open to Nigeria" = eligibility mentions Nigeria / Nigerian / Africa / Sub-Saharan. */
-export function isOpenToNigeria(deal: Deal): boolean {
+export function isOpenToNigeria(deal: Pick<Deal, "eligibility">): boolean {
   return /nigeria|nigerian|africa|sub-saharan/i.test(deal.eligibility);
 }
 
 /** "Worldwide" = eligibility mentions worldwide / globally. */
-export function isWorldwide(deal: Deal): boolean {
+export function isWorldwide(deal: Pick<Deal, "eligibility">): boolean {
   return /worldwide|globally/i.test(deal.eligibility);
 }
 
