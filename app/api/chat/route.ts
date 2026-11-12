@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabase/server";
-import { ALL_DEALS, daysLeft, type Deal } from "@/lib/deals";
+import { ALL_DEALS, type Deal } from "@/lib/deals";
 import { FEED_URL } from "@/lib/feed";
-import { prepareDeals, type ResolvedDeal } from "@/lib/classify";
+import { prepareDeals } from "@/lib/classify";
+import {
+  buildBroadSnapshot,
+  buildSnapshot,
+  countsSummary,
+  isBroadQuestion,
+  rankDeals,
+  todayLine,
+  tryDeterministic,
+} from "@/lib/scout-answer";
 
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
@@ -20,219 +29,6 @@ const FUNCTION_BUDGET_MS = 9500;
 interface IncomingMessage {
   role?: unknown;
   content?: unknown;
-}
-
-const STOPWORDS = new Set([
-  "the", "and", "for", "with", "what", "which", "that", "this", "are",
-  "there", "here", "have", "has", "from", "about", "when", "where",
-  "list", "show", "give", "tell", "please", "open", "free", "any",
-  "all", "can", "you", "your", "our", "out", "into", "more", "some",
-  "does", "like", "need", "want", "get", "also", "still", "available",
-  "site", "listed", "opportunity", "opportunities", "page",
-]);
-
-const DEADLINE_WORDS = /\b(deadline|deadlines|closing|closes|close|expir|expires|expiry|due|soon|running out|last date)\b/i;
-
-// Track words a question may use, mapped to the deal track they mean.
-const TRACK_WORDS: Record<string, string[]> = {
-  scholarships: ["scholarship", "scholarships", "masters", "phd", "study"],
-  jobs: ["job", "jobs", "remote", "work", "hire", "hiring"],
-  "ai-tools": ["ai", "tool", "tools", "api", "model", "llm"],
-  crypto: ["crypto", "token", "nft", "blockchain", "web3", "coin"],
-  banking: ["bank", "banking", "card", "account", "finance"],
-  cloud: ["cloud", "gpu", "hosting", "server", "compute"],
-  software: ["software", "app", "apps", "saas", "design", "code", "coding"],
-};
-
-function tokenize(text: string): string[] {
-  const words = text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
-  const out: string[] = [];
-  for (const w of words) {
-    if (w.length < 3 || STOPWORDS.has(w)) continue;
-    if (!out.includes(w)) out.push(w);
-  }
-  return out;
-}
-
-function wordForms(w: string): string[] {
-  // Match singular and plural forms of a question word.
-  if (w.endsWith("s")) return [w, w.slice(0, -1)];
-  return [w, `${w}s`];
-}
-
-function scoreDeal(d: ResolvedDeal, tokens: string[]): number {
-  const haystack = `${d.title} ${d.track} ${d.eligibility} ${d.requirements}`.toLowerCase();
-  let score = 0;
-  for (const t of tokens) {
-    if (wordForms(t).some((f) => haystack.includes(f))) score += 1;
-    if (d.title.toLowerCase().includes(t)) score += 1;
-  }
-  for (const [track, words] of Object.entries(TRACK_WORDS)) {
-    if (d.track === track && words.some((w) => tokens.includes(w))) score += 2;
-  }
-  return score;
-}
-
-function isClosingSoon(d: ResolvedDeal): boolean {
-  const left = daysLeft(d);
-  return left !== null && left >= 0 && left <= 14;
-}
-
-/** Deals ordered for this question: deadline deals first when the user
- *  asks about deadlines, then best keyword matches, then soonest expiry. */
-function rankDeals(deals: ResolvedDeal[], question: string): ResolvedDeal[] {
-  const tokens = tokenize(question);
-  const deadlineAsked = DEADLINE_WORDS.test(question);
-  const scored = deals.map((d) => ({ d, score: scoreDeal(d, tokens) }));
-  const closing = scored
-    .filter(({ d }) => isClosingSoon(d))
-    .sort((a, b) => (daysLeft(a.d) ?? 99) - (daysLeft(b.d) ?? 99))
-    .map(({ d }) => d);
-  const matched = scored
-    .filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score || (daysLeft(a.d) ?? 99) - (daysLeft(b.d) ?? 99))
-    .map(({ d }) => d);
-  const seen = new Set<number>();
-  const ordered: ResolvedDeal[] = [];
-  const push = (d: ResolvedDeal) => {
-    if (!seen.has(d.id)) {
-      seen.add(d.id);
-      ordered.push(d);
-    }
-  };
-  if (deadlineAsked) closing.forEach(push);
-  matched.forEach(push);
-  if (matched.length === 0 && !deadlineAsked) {
-    // Broad question (e.g. "what is listed"): a spread across tracks.
-    const byTrack = new Map<string, ResolvedDeal[]>();
-    for (const { d } of scored) {
-      const list = byTrack.get(d.track) ?? [];
-      list.push(d);
-      byTrack.set(d.track, list);
-    }
-    for (const list of byTrack.values()) {
-      list
-        .sort((a, b) => (daysLeft(a) ?? 99) - (daysLeft(b) ?? 99))
-        .slice(0, 2)
-        .forEach(push);
-    }
-  }
-  // Fill any remaining room with the soonest-expiring deals not yet listed.
-  scored
-    .sort((a, b) => (daysLeft(a.d) ?? 99) - (daysLeft(b.d) ?? 99))
-    .map(({ d }) => d)
-    .forEach(push);
-  return ordered;
-}
-
-function compactDeal(d: ResolvedDeal) {
-  return {
-    title: d.title,
-    track: d.track,
-    value: d.estimatedValue,
-    eligibility: d.eligibility.slice(0, 200),
-    expiresOn: d.expiresOn,
-    sourceUrl: d.sourceUrl,
-    requirements: d.requirements.slice(0, 300),
-  };
-}
-
-/** Today's date in the user's timezone, for the system prompt. */
-function todayLine(): string {
-  const now = new Date();
-  const fmt = (opts: Intl.DateTimeFormatOptions) =>
-    new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Lagos", ...opts }).format(now);
-  return `Today is ${fmt({ weekday: "long" })} ${fmt({ day: "numeric" })} ${fmt({ month: "long" })} ${fmt({ year: "numeric" })}.`;
-}
-
-/** Counts of the full list, by track. */
-function trackCounts(deals: ResolvedDeal[]): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const d of deals) {
-    counts.set(d.track, (counts.get(d.track) ?? 0) + 1);
-  }
-  return counts;
-}
-
-/** Tracks ordered by count, largest first (the counts order). */
-function trackOrder(deals: ResolvedDeal[]): string[] {
-  return [...trackCounts(deals).entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([track]) => track);
-}
-
-/** How many deals match the question's keywords at all. */
-function matchedDealCount(deals: ResolvedDeal[], question: string): number {
-  const tokens = tokenize(question);
-  let n = 0;
-  for (const d of deals) {
-    if (scoreDeal(d, tokens) > 0) n += 1;
-  }
-  return n;
-}
-
-/** A broad question asks about the whole list without naming a deadline,
- *  a track or a programme: fewer than 5 deals match its keywords. */
-function isBroadQuestion(deals: ResolvedDeal[], question: string): boolean {
-  if (DEADLINE_WORDS.test(question)) return false;
-  return matchedDealCount(deals, question) < 5;
-}
-
-/** One short example per display track (title, track, expiry only),
- *  ordered by the counts order. Used for broad questions only, so the
- *  model sees the shape of the list without a long ranked sample. */
-function buildBroadSnapshot(deals: ResolvedDeal[]): string {
-  const entries: { title: string; track: string; expiresOn: string | null }[] = [];
-  for (const track of trackOrder(deals)) {
-    const inTrack = deals.filter((d) => d.track === track);
-    inTrack.sort((a, b) => (daysLeft(a) ?? 99) - (daysLeft(b) ?? 99));
-    const d = inTrack[0];
-    if (d) entries.push({ title: d.title, track: d.track, expiresOn: d.expiresOn });
-  }
-  return JSON.stringify(entries);
-}
-
-/** Counts of the full list, by track, for the counts summary. */
-const TRACK_LABELS: Record<string, string> = {
-  scholarships: "scholarships",
-  grants: "grants",
-  hackathons: "hackathons",
-  competitions: "competitions",
-  jobs: "remote jobs",
-  "ai-tools": "AI tools",
-  cloud: "cloud",
-  software: "software",
-  banking: "banking",
-  crypto: "crypto",
-};
-
-function countsSummary(deals: ResolvedDeal[]): string {
-  const counts = trackCounts(deals);
-  const parts = trackOrder(deals).map(
-    (track) => `${counts.get(track)} ${TRACK_LABELS[track] ?? track}`,
-  );
-  return `The full list has ${deals.length} opportunities: ${parts.join(", ")}.`;
-}
-
-/** Snapshot of the ranked deals, cut at maxChars without breaking a deal. */
-function buildSnapshot(ranked: ResolvedDeal[], maxChars: number): string {
-  const parts: string[] = ["["];
-  let length = 1;
-  for (const d of ranked) {
-    const piece = JSON.stringify(compactDeal(d));
-    const extra = piece.length + (parts.length > 1 ? 1 : 0);
-    if (length + extra > maxChars && parts.length > 1) break;
-    if (length + extra > maxChars) {
-      // A single deal alone is too long: keep it trimmed rather than empty.
-      parts.push(piece.slice(0, Math.max(0, maxChars - length - 2)));
-      break;
-    }
-    if (parts.length > 1) parts.push(",");
-    parts.push(piece);
-    length += extra;
-  }
-  parts.push("]");
-  return parts.join("");
 }
 
 async function loadDeals(): Promise<Deal[]> {
@@ -495,15 +291,6 @@ export async function POST(req: Request) {
     );
   }
 
-  const geminiKey = process.env.GEMINI_API_KEY;
-  const openRouterKey = process.env.OPENROUTER_API_KEY;
-  if (!geminiKey && !openRouterKey) {
-    return NextResponse.json(
-      { error: "The chatbot is not configured yet. Try again later." },
-      { status: 503 },
-    );
-  }
-
   let body: unknown;
   try {
     body = await req.json();
@@ -541,6 +328,32 @@ export async function POST(req: Request) {
   // Same list the site displays: dedupe and re-classify first, so the
   // counts, ranking and snapshot all describe the same opportunities.
   const deals = prepareDeals(await loadDeals());
+
+  // Deterministic first: if the listings themselves answer the question,
+  // answer from the data with no model call at all, so it cannot fail
+  // with "Scout could not answer right now".
+  const deterministic = tryDeterministic(deals, question);
+  if (deterministic) {
+    console.log(
+      "[ask-scout] answered",
+      JSON.stringify({
+        path: `deterministic:${deterministic.type}`,
+        question: questionLog,
+      }),
+    );
+    return NextResponse.json({ reply: deterministic.reply });
+  }
+
+  // Only the model path needs API keys; the deterministic path above
+  // already answered without them.
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  if (!geminiKey && !openRouterKey) {
+    return NextResponse.json(
+      { error: "The chatbot is not configured yet. Try again later." },
+      { status: 503 },
+    );
+  }
   const broad = isBroadQuestion(deals, question);
   const ranked = broad ? [] : rankDeals(deals, question);
 
@@ -580,12 +393,12 @@ export async function POST(req: Request) {
       { status: 502 },
     );
 
-  // Race: Gemini and OpenRouter Gemma start at the same time and the
-  // first one to answer wins, aborting the loser. Gemini's latency
-  // swings from ~1s to over 9s, so waiting the whole timeout on it
-  // serially left no time for the fallback. Ernie stays as a serial
-  // fallback when both raced attempts fail fast and enough of the
-  // function time budget is left.
+  // Race: all three providers start at the same time and the first one
+  // to answer wins, aborting the losers. Waiting serially burned the
+  // whole budget on one slow attempt (Gemini timing out at 9s while
+  // OpenRouter 429ed), so nothing was left for a fallback. Racing all
+  // three means a single slow or rate-limited provider cannot sink the
+  // question on its own.
   const chainStarted = Date.now();
   // Broad answers are short (counts plus one line per category), so a
   // small token cap keeps them fast enough to finish inside the timeout.
@@ -604,12 +417,6 @@ export async function POST(req: Request) {
       }),
     );
   };
-  const isRetriable = (r: CallResult) =>
-    r.status === 429 ||
-    r.status >= 500 ||
-    r.status === 0 ||
-    r.aborted ||
-    r.errorSnippet === "empty reply";
   // Time left for a new attempt, keeping headroom inside the budget.
   const attemptTimeout = () =>
     Math.min(FETCH_TIMEOUT_MS, FUNCTION_BUDGET_MS - (Date.now() - chainStarted) - 500);
@@ -641,6 +448,17 @@ export async function POST(req: Request) {
         raceController.signal,
       ),
     );
+    racers.push(
+      callOpenRouter(
+        openRouterKey,
+        FALLBACK_MODEL,
+        buildPrompt(SNAPSHOT_RETRY_CHARS),
+        messages,
+        raceTimeoutMs,
+        maxTokens,
+        raceController.signal,
+      ),
+    );
   }
 
   const settled: CallResult[] = [];
@@ -664,25 +482,14 @@ export async function POST(req: Request) {
     }
   });
   if (winner?.reply) {
+    console.log(
+      "[ask-scout] answered",
+      JSON.stringify({ path: `model:${winner.model}`, question: questionLog }),
+    );
     return NextResponse.json({ reply: winner.reply });
   }
   for (const r of settled) {
     logFailure(r.model === GEMINI_MODEL ? "gemini" : "openrouter", r);
-  }
-
-  if (openRouterKey && settled.some(isRetriable) && attemptTimeout() >= 3000) {
-    const third = await callOpenRouter(
-      openRouterKey,
-      FALLBACK_MODEL,
-      buildPrompt(SNAPSHOT_RETRY_CHARS),
-      messages,
-      attemptTimeout(),
-      maxTokens,
-    );
-    if (third.ok && third.reply) {
-      return NextResponse.json({ reply: third.reply });
-    }
-    logFailure("openrouter retry", third);
   }
 
   return fail();
