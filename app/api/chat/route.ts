@@ -11,6 +11,7 @@ import {
   isBroadQuestion,
   isGoodModelReply,
   isJudgmentQuestion,
+  JUDGMENT_OPEN_FIELD_INSTRUCTION,
   rankDeals,
   rankJudgmentShortlist,
   todayLine,
@@ -380,7 +381,8 @@ export async function POST(req: Request) {
     "When the user asks about the whole list, use the counts line above the list to report the totals, and summarize by category instead of listing every item one by one. The list below is only a sample of the full list, ranked for this question.",
     ...(judgment
       ? [
-          "The shortlist below was chosen for this question: direct matches for the field or background named, plus opportunities open to any field. Judge only what is shown. Do not claim a listing is absent or a field is uncovered when it is not in the shortlist; if the shortlist does not cover the question, say so and suggest checking the site.",
+          "The shortlist below is split into two sections: 'Field-specific fits' and 'Open to all disciplines, any graduate can apply'. Judge only what is shown. Do not claim a listing is absent or a field is uncovered when it is not in the shortlist; if the shortlist does not cover the question, say so and suggest checking the site.",
+          JUDGMENT_OPEN_FIELD_INSTRUCTION,
         ]
       : [
           "The ranked sample below is drawn from the same list the counts describe, and earlier answers in this conversation came from that same list, so do not retract or second-guess them when the sample shows only part of the list.",

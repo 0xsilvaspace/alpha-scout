@@ -1025,6 +1025,13 @@ export function isJudgmentQuestion(question: string): boolean {
   return JUDGMENT_RE.test(question);
 }
 
+/** Extra instruction for judgment questions, used in the route's system
+ *  prompt: open-to-all listings are strong fits, not background. The
+ *  model kept skipping the any-discipline scholarships because they do
+ *  not name the field, so this is said explicitly. */
+export const JUDGMENT_OPEN_FIELD_INSTRUCTION =
+  "Listings open to all disciplines are strong fits for any graduate. Do not skip them just because they do not name the field. When the question is about a graduate, recommend a mix of field-specific roles and any-discipline scholarships, and name the strongest any-discipline scholarships in the shortlist.";
+
 /** Field expansion for judgment questions: a field named in the
  *  question also matches its neighbouring fields in the listings.
  *  Every value word below was checked to occur in the listings data;
@@ -1338,12 +1345,55 @@ function compactJudgmentDeal(d: ResolvedDeal) {
   };
 }
 
-/** Judgment snapshot: same cut as buildSnapshot, slimmer per deal. */
+/** Judgment snapshot: the shortlist split into two labelled sections so
+ *  the model sees the open-to-all scholarships as a distinct relevant
+ *  group instead of background. Field-specific fits first, then the
+ *  listings open to any discipline, scholarships first within that
+ *  section (they are the strongest fits for a graduate). The open
+ *  section is built first, up to 60% of the budget, so it is never
+ *  squeezed out of the snapshot by the field section. The same
+ *  deals and the same 8,000-char cap as before; only the presentation
+ *  changes. */
 export function buildJudgmentSnapshot(
   ranked: ResolvedDeal[],
   maxChars: number,
 ): string {
-  return buildSnapshotFrom(ranked, maxChars, compactJudgmentDeal);
+  const FIELD_HEADER = "Field-specific fits:";
+  const OPEN_HEADER = "Open to all disciplines, any graduate can apply:";
+  const open = ranked.filter((d) => isOpenField(d) || isFieldOpen(d));
+  const field = ranked.filter((d) => !isOpenField(d) && !isFieldOpen(d));
+  const headers =
+    open.length > 0
+      ? FIELD_HEADER.length + 1 + OPEN_HEADER.length + 1 + 1
+      : FIELD_HEADER.length + 1;
+  const arraysBudget = Math.max(0, maxChars - headers);
+  // The open section holds the any-discipline scholarships the model
+  // kept skipping, so it is built first (up to 60% of the budget) and
+  // the field section takes the remainder. The printed order is still
+  // field section first, open section second. A field-first budget
+  // starved the open section: Stipendium Hungaricum (latest deadline
+  // of the open scholarships) was cut from the snapshot.
+  const openOrdered = [...open].sort(
+    (a, b) =>
+      (a.track === "scholarships" ? 0 : 1) -
+        (b.track === "scholarships" ? 0 : 1) || bySoonest(a, b),
+  );
+  const openText =
+    open.length > 0
+      ? buildSnapshotFrom(
+          openOrdered,
+          Math.floor(arraysBudget * 0.6),
+          compactJudgmentDeal,
+        )
+      : "";
+  const fieldText = buildSnapshotFrom(
+    field,
+    Math.max(0, arraysBudget - openText.length),
+    compactJudgmentDeal,
+  );
+  const sections = [`${FIELD_HEADER}\n${fieldText}`];
+  if (open.length > 0) sections.push(`${OPEN_HEADER}\n${openText}`);
+  return sections.join("\n");
 }
 
 function buildSnapshotFrom(
