@@ -5,10 +5,13 @@ import { FEED_URL } from "@/lib/feed";
 import { prepareDeals } from "@/lib/classify";
 import {
   buildBroadSnapshot,
+  buildJudgmentSnapshot,
   buildSnapshot,
   countsSummary,
   isBroadQuestion,
+  isJudgmentQuestion,
   rankDeals,
+  rankJudgmentShortlist,
   todayLine,
   tryDeterministic,
 } from "@/lib/scout-answer";
@@ -355,7 +358,16 @@ export async function POST(req: Request) {
     );
   }
   const broad = isBroadQuestion(deals, question);
-  const ranked = broad ? [] : rankDeals(deals, question);
+  // Judgment questions use the smarter shortlist (field expansion plus
+  // open-to-all), not the plain keyword ranking, and never the broad
+  // one-example-per-track snapshot: the model can only judge what it
+  // is shown.
+  const judgment = isJudgmentQuestion(question);
+  const ranked = judgment
+    ? rankJudgmentShortlist(deals, question)
+    : broad
+      ? []
+      : rankDeals(deals, question);
 
   const systemIntro = [
     "You are Scout, the assistant for Alpha Scout, a site that lists free opportunities open to Nigeria: scholarships, grants, hackathons, competitions, remote jobs and free tools.",
@@ -366,7 +378,13 @@ export async function POST(req: Request) {
   const systemSpecific = [
     ...systemIntro,
     "When the user asks about the whole list, use the counts line above the list to report the totals, and summarize by category instead of listing every item one by one. The list below is only a sample of the full list, ranked for this question.",
-    "The ranked sample below is drawn from the same list the counts describe, and earlier answers in this conversation came from that same list, so do not retract or second-guess them when the sample shows only part of the list.",
+    ...(judgment
+      ? [
+          "The shortlist below was chosen for this question: direct matches for the field or background named, plus opportunities open to any field. Judge only what is shown. Do not claim a listing is absent or a field is uncovered when it is not in the shortlist; if the shortlist does not cover the question, say so and suggest checking the site.",
+        ]
+      : [
+          "The ranked sample below is drawn from the same list the counts describe, and earlier answers in this conversation came from that same list, so do not retract or second-guess them when the sample shows only part of the list.",
+        ]),
     "Never invent details, values or deadlines. If the list does not contain the answer, say so plainly and suggest checking the official source.",
     "Always include the official source link for any opportunity you mention.",
     "Keep every answer under 250 words. List at most 5 opportunities, one short line each, with the official source link. No long paragraphs.",
@@ -382,10 +400,18 @@ export async function POST(req: Request) {
     "Keep every answer under 250 words. List at most 5 opportunities, one short line each, with the official source link. No long paragraphs.",
     "Opportunities:",
   ].join("\n");
-  const buildPrompt = (maxChars: number) =>
-    broad
-      ? `${systemBroad}\n${countsSummary(deals)}\n${buildBroadSnapshot(deals)}`
-      : `${systemSpecific}\n${countsSummary(deals)}\n${buildSnapshot(ranked, maxChars)}`;
+  // Judgment questions get a slimmer snapshot (eligibility and
+  // requirements trimmed) so more of the shortlist fits in view: the
+  // model needs breadth, the right candidates, more than full text.
+  const buildPrompt = (maxChars: number) => {
+    if (broad && !judgment) {
+      return `${systemBroad}\n${countsSummary(deals)}\n${buildBroadSnapshot(deals)}`;
+    }
+    const snapshot = judgment
+      ? buildJudgmentSnapshot(ranked, maxChars)
+      : buildSnapshot(ranked, maxChars);
+    return `${systemSpecific}\n${countsSummary(deals)}\n${snapshot}`;
+  };
 
   const fail = () =>
     NextResponse.json(
@@ -403,7 +429,9 @@ export async function POST(req: Request) {
   // Broad answers are short (counts plus one line per category), so a
   // small token cap keeps them fast enough to finish inside the timeout.
   // Detail answers list items with links, so they get a larger cap.
-  const maxTokens = broad ? MAX_TOKENS_BROAD : MAX_TOKENS_DETAIL;
+  // Judgment questions always get the detail cap, even when the
+  // question looks broad, so the model has room to judge the shortlist.
+  const maxTokens = broad && !judgment ? MAX_TOKENS_BROAD : MAX_TOKENS_DETAIL;
   const logFailure = (label: string, r: CallResult) => {
     console.error(
       `[ask-scout] ${label} failed`,

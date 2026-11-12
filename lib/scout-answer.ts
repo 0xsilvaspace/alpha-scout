@@ -163,18 +163,46 @@ function isStrong(top: ScoredDeal, second: ScoredDeal | undefined): boolean {
   return top.score >= 5 && (!second || top.score - second.score >= 2);
 }
 
-/** Full brief of one deal: value, deadline, eligibility, requirements,
- *  action steps, official source. */
+/** Lowercase the first letter, for flowing text after a lead-in. */
+function lowerFirst(text: string): string {
+  const t = text.trim();
+  if (!t) return t;
+  const first = t.search(/[A-Za-z]/);
+  if (first < 0) return t;
+  return t.slice(0, first) + t[first].toLowerCase() + t.slice(first + 1);
+}
+
+/** One sentence saying who the opportunity is for. Eligibility text
+ *  that starts with "Open to" becomes "It is for ..."; anything else
+ *  stands as its own sentence. */
+function whoItIsFor(d: ResolvedDeal): string {
+  const elig = truncate(clean(d.eligibility), 200).replace(/[.;\s]+$/, "");
+  if (!elig) return "";
+  const m = elig.match(/^open to\s+/i);
+  if (m) return `It is for ${lowerFirst(elig.slice(m[0].length))}.`;
+  return `${elig}.`;
+}
+
+/** Full brief of one deal, written like an assistant answering: a
+ *  natural opening, the key facts in clean sentences, and the
+ *  official source on its own line. Not a dump of field labels. */
 function singleDealReply(d: ResolvedDeal): string {
-  return [
-    `**${clean(d.title)}**`,
-    `Value: ${clean(d.estimatedValue)}`,
-    `Deadline: ${deadlineText(d)}`,
-    `Eligibility: ${truncate(clean(d.eligibility), 200)}`,
-    `Requirements: ${truncate(clean(d.requirements), 250)}`,
-    `How to apply: ${truncate(clean(d.actionSteps), 250)}`,
-    `Official source: ${d.sourceUrl}`,
-  ].join("\n");
+  const lines: string[] = [`**${clean(d.title)}**`, ""];
+  const value = clean(d.estimatedValue).trim().replace(/[.;\s]+$/, "");
+  if (value) lines.push(`${value}.`);
+  lines.push(
+    d.expiresOn
+      ? `Applications close on ${deadlineText(d)}.`
+      : "No closing date is listed.",
+  );
+  const who = whoItIsFor(d);
+  if (who) lines.push(who);
+  const req = truncate(clean(d.requirements), 250).replace(/[.;\s]+$/, "");
+  if (req) lines.push(`${req}.`);
+  const steps = truncate(clean(d.actionSteps), 300).replace(/[.;\s]+$/, "");
+  if (steps) lines.push(`To apply, ${lowerFirst(steps)}.`);
+  lines.push("", `Official source: ${d.sourceUrl}`);
+  return lines.join("\n");
 }
 
 type DealField = "deadline" | "value" | "requirements" | "steps";
@@ -190,27 +218,74 @@ function detectField(question: string): DealField | null {
 
 function fieldReply(d: ResolvedDeal, field: DealField): string {
   const title = `**${clean(d.title)}**`;
+  const value = clean(d.estimatedValue).trim().replace(/[.;\s]+$/, "");
+  const deadlineLine = d.expiresOn
+    ? `Applications close on ${deadlineText(d)}.`
+    : "No closing date is listed.";
   switch (field) {
     case "deadline":
-      return `${title} closes on ${deadlineText(d)}.\nValue: ${truncate(clean(d.estimatedValue), 100)}\nOfficial source: ${d.sourceUrl}`;
+      return `${title}\n\n${deadlineLine}${value ? ` ${value}.` : ""}\n\nOfficial source: ${d.sourceUrl}`;
     case "value":
-      return `${title}: ${clean(d.estimatedValue)}\nDeadline: ${deadlineText(d)}\nOfficial source: ${d.sourceUrl}`;
-    case "requirements":
-      return `${title}\nRequirements: ${truncate(clean(d.requirements), 250)}\nEligibility: ${truncate(clean(d.eligibility), 200)}\nOfficial source: ${d.sourceUrl}`;
-    case "steps":
-      return `${title}\nHow to apply: ${truncate(clean(d.actionSteps), 300)}\nDeadline: ${deadlineText(d)}\nOfficial source: ${d.sourceUrl}`;
+      return `${title}\n\n${value ? `${value}. ` : ""}${deadlineLine}\n\nOfficial source: ${d.sourceUrl}`;
+    case "requirements": {
+      const who = whoItIsFor(d);
+      const req = truncate(clean(d.requirements), 250).replace(/[.;\s]+$/, "");
+      return `${title}\n\n${who ? `${who} ` : ""}${req ? `${req}.` : ""}\n\nOfficial source: ${d.sourceUrl}`;
+    }
+    case "steps": {
+      const steps = truncate(clean(d.actionSteps), 300).replace(/[.;\s]+$/, "");
+      return `${title}\n\n${steps ? `To apply, ${lowerFirst(steps)}. ` : ""}${deadlineLine}\n\nOfficial source: ${d.sourceUrl}`;
+    }
   }
 }
 
 const COMPARISON_RE = /\bcompare\b|\bvs\.?\b|versus|which is better|difference between/i;
 
-/** Side-by-side facts for each named deal. No winner is picked. */
+/** Side-by-side facts for each named deal, in a tidy layout with
+ *  matching facts per deal, plus one closing sentence on the main
+ *  difference. No winner is picked. */
 function comparisonReply(named: ScoredDeal[]): string {
-  const lines = named.map(
-    (s) =>
-      `- **${clean(s.d.title)}**: ${truncate(clean(s.d.estimatedValue), 80)}, closes ${deadlineText(s.d)}, ${truncate(clean(s.d.eligibility), 120)}. [Official source](${s.d.sourceUrl})`,
-  );
-  return `Here they are side by side:\n${lines.join("\n")}`;
+  const lines = ["Here is how they compare:", ""];
+  for (const s of named) {
+    const d = s.d;
+    const value = clean(d.estimatedValue).trim().replace(/[.;\s]+$/, "");
+    const elig = truncate(clean(d.eligibility), 120).replace(/[.;\s]+$/, "");
+    lines.push(`**${clean(d.title)}**`);
+    if (value) lines.push(`${value}.`);
+    lines.push(
+      d.expiresOn ? `Closes ${deadlineText(d)}.` : "No closing date is listed.",
+    );
+    if (elig) lines.push(`${elig}.`);
+    lines.push(`[Official source](${d.sourceUrl})`, "");
+  }
+  const dated = named
+    .filter((s) => s.d.expiresOn)
+    .sort((a, b) => bySoonest(a.d, b.d));
+  if (
+    dated.length >= 2 &&
+    dated[0].d.expiresOn !== dated[dated.length - 1].d.expiresOn
+  ) {
+    lines.push(
+      `${clean(dated[0].d.title)} closes first, on ${formatDate(dated[0].d.expiresOn as string)}, while ${clean(dated[dated.length - 1].d.title)} runs until ${formatDate(dated[dated.length - 1].d.expiresOn as string)}.`,
+    );
+  } else {
+    const valued = named
+      .filter((s) => s.d.valueUsd !== null)
+      .sort((a, b) => (b.d.valueUsd ?? 0) - (a.d.valueUsd ?? 0));
+    if (
+      valued.length >= 2 &&
+      valued[0].d.valueUsd !== valued[valued.length - 1].d.valueUsd
+    ) {
+      lines.push(
+        `${clean(valued[0].d.title)} lists the highest value at ${clean(valued[0].d.estimatedValue)}.`,
+      );
+    } else {
+      lines.push(
+        "They differ mainly in eligibility and focus, so check the official source for the one that fits you.",
+      );
+    }
+  }
+  return lines.join("\n").trimEnd();
 }
 
 /** Questions that need judgment or a recommendation go to the model,
@@ -238,7 +313,7 @@ function extractSubject(question: string): string {
 }
 
 function absentReply(subject: string, closest: ScoredDeal[]): string {
-  const lines = [`**${subject}** is not listed on the site.`];
+  const lines = [`I could not find a ${subject} on the site.`];
   if (closest.length > 0) {
     lines.push("The closest matches are:");
     for (const s of closest) lines.push(dealLine(s.d));
@@ -659,6 +734,178 @@ export function tryDeterministic(
   return null;
 }
 
+/* ------------------------------------------------------------------ */
+/* Smarter shortlist for judgment questions                          */
+/* ------------------------------------------------------------------ */
+
+// Judgment questions ("which fits a physics graduate?") go to the
+// model, and the model can only judge what it is shown. A plain
+// keyword-ranked sample missed the strongest fits, so the shortlist
+// for judgment questions is built from three groups: direct field
+// matches (with field expansion), opportunities open to any field,
+// and the question's own keyword matches.
+
+export function isJudgmentQuestion(question: string): boolean {
+  return JUDGMENT_RE.test(question);
+}
+
+/** Field expansion for judgment questions: a field named in the
+ *  question also matches its neighbouring fields in the listings.
+ *  Every value word below was checked to occur in the listings data;
+ *  words with zero occurrences (laboratory, mathematics, energy,
+ *  medical, clinical, management) were left out. "research" was left
+ *  out too: it matches market research and generic listings, not
+ *  field-specific fits, and the genuine research fits match through
+ *  stem, science, materials or physics instead. */
+const FIELD_EXPANSIONS: Record<string, string[]> = {
+  physics: ["physics", "stem", "science", "engineering", "materials", "chemistry"],
+  computer: ["software", "coding", "programming", "data", "ai", "ml", "machine", "learning", "computer", "developer", "engineering"],
+  software: ["software", "coding", "programming", "data", "ai", "ml", "machine", "learning", "computer", "developer", "engineering"],
+  programming: ["software", "coding", "programming", "data", "ai", "ml", "machine", "learning", "computer", "developer", "engineering"],
+  coding: ["software", "coding", "programming", "data", "ai", "ml", "machine", "learning", "computer", "developer", "engineering"],
+  developer: ["software", "coding", "programming", "data", "ai", "ml", "machine", "learning", "computer", "developer", "engineering"],
+  data: ["software", "coding", "programming", "data", "ai", "ml", "machine", "learning", "computer", "developer", "engineering"],
+  machine: ["ai", "ml", "machine", "learning", "data", "software"],
+  learning: ["ai", "ml", "machine", "learning", "data", "software"],
+  ai: ["ai", "ml", "machine", "learning", "data", "software"],
+  medicine: ["medicine", "health", "biology"],
+  health: ["health", "biology"],
+  business: ["business", "finance", "entrepreneurship"],
+  law: ["law", "legal"],
+  design: ["design", "art", "creative"],
+  art: ["design", "art", "creative"],
+  engineering: ["engineering", "stem", "science", "materials"],
+  maths: ["maths", "stem", "science", "data"],
+  mathematics: ["maths", "stem", "science", "data"],
+  science: ["science", "stem"],
+};
+
+/** Wording that says a listing is open to any field of study. Only
+ *  phrases that actually occur in the listings data are used: the
+ *  bare "open to all" in the data refers to nationality, age or users
+ *  ("Open to all nationalities", "Open to all ages", "Open to all
+ *  users"), not to fields of study, so it is not matched here. */
+const OPEN_FIELD_PHRASES = [
+  "all academic disciplines",
+  "any field",
+  "any discipline",
+  "all disciplines",
+  "all fields",
+  "all subjects",
+  "any subject",
+  "open to all disciplines",
+  "open to all fields",
+];
+
+function isOpenField(d: ResolvedDeal): boolean {
+  const text = `${d.title} ${d.eligibility} ${d.requirements}`.toLowerCase();
+  return OPEN_FIELD_PHRASES.some((p) => text.includes(p));
+}
+
+/** Specific fields of study or work. A listing whose title,
+ *  eligibility and requirements name none of these is open to any
+ *  field, so it belongs in a fit shortlist for any graduate. Words
+ *  that also appear as benefits rather than fields (for example
+ *  "health" in "health insurance") were left out, since a false
+ *  field-open listing in the shortlist is harmless: the model still
+ *  judges it, while a missed open listing never gets judged. */
+const FIELD_WORDS = new Set([
+  "physics", "chemistry", "biology", "biochemistry", "mathematics",
+  "maths", "engineering", "medicine", "medical", "nursing", "pharmacy",
+  "law", "legal", "business", "economics", "finance", "accounting",
+  "computer", "software", "programming", "coding", "data", "agriculture",
+  "agronomy", "veterinary", "architecture", "music", "film", "journalism",
+  "media", "politics", "policy", "migration", "humanitarian", "geology",
+  "astronomy", "statistics", "psychology", "sociology", "history",
+  "philosophy", "linguistics", "literature", "teaching", "sports",
+  "tourism", "marketing", "logistics", "hospitality", "artificial",
+  "machine", "cybersecurity", "robotics", "materials", "development",
+  "developer", "engineer", "stem", "electrical",
+]);
+
+function isFieldOpen(d: ResolvedDeal): boolean {
+  const words = new Set(
+    `${d.title} ${d.eligibility} ${d.requirements}`
+      .toLowerCase()
+      .match(/[a-z0-9]+/g) ?? [],
+  );
+  for (const w of FIELD_WORDS) if (words.has(w)) return false;
+  return true;
+}
+
+/** Whether any of the given words appears in the deal's title.
+ *  A title match means the listing is about that field, not just
+ *  mentioning it in a long list of fields. */
+function titleMatches(d: ResolvedDeal, tokens: string[]): boolean {
+  const titleWords = new Set(
+    d.title.toLowerCase().match(/[a-z0-9]+/g) ?? [],
+  );
+  for (const token of tokens) {
+    for (const form of wordVariants(token)) {
+      if (titleWords.has(form)) return true;
+    }
+  }
+  return false;
+}
+
+/** Shortlist for judgment questions: direct field matches first
+ *  (with field expansion), then listings open to any field, then the
+ *  question's own keyword matches. The snapshot caps in the route
+ *  still cut the list to size; only its contents get smarter. */
+export function rankJudgmentShortlist(
+  deals: ResolvedDeal[],
+  question: string,
+): ResolvedDeal[] {
+  const active = activeDeals(deals);
+  const tokens = tokenize(question);
+  const expanded = new Set<string>(tokens);
+  for (const t of tokens) {
+    const extra = FIELD_EXPANSIONS[t];
+    if (extra) for (const w of extra) expanded.add(w);
+  }
+  const expandedTokens = [...expanded];
+  // A direct field match is a listing about the field (an expansion
+  // word in its title) or a strong multi-word match. A single shared
+  // word is not enough: "science" also matches "social science" and
+  // "Agricultural Sciences", and generic listings that enumerate many
+  // fields ("engineering, science, law, finance...") would otherwise
+  // match every field question.
+  const groupA = active
+    .map((d) => ({ d, score: scoreDeal(d, expandedTokens) }))
+    .filter(
+      (s) =>
+        s.score >= 3 || titleMatches(s.d, expandedTokens),
+    )
+    .sort((a, b) => b.score - a.score || bySoonest(a.d, b.d))
+    .map((s) => s.d);
+  const groupB = active.filter(isOpenField).sort(bySoonest);
+  // Open-to-any-field listings, scholarships first: for a graduate
+  // asking what fits them, the open scholarships are the strongest
+  // candidates, so they come before open jobs and tools.
+  const groupC = active
+    .filter(isFieldOpen)
+    .sort(
+      (a, b) =>
+        (a.track === "scholarships" ? 0 : 1) -
+          (b.track === "scholarships" ? 0 : 1) || bySoonest(a, b),
+    );
+  // Weaker field or keyword matches last: they stay in the shortlist
+  // for the model to see if the snapshot ever reaches them, but they
+  // do not take space from the direct matches and open listings.
+  const groupD = scoreAll(active, expandedTokens)
+    .filter((s) => s.score > 0)
+    .map((s) => s.d);
+  const seen = new Set<number>();
+  const out: ResolvedDeal[] = [];
+  for (const d of [...groupA, ...groupB, ...groupC, ...groupD]) {
+    if (!seen.has(d.id)) {
+      seen.add(d.id);
+      out.push(d);
+    }
+  }
+  return out;
+}
+
 /** Deals ordered for this question: deadline deals first when the user
  *  asks about deadlines, then best keyword matches, then soonest expiry. */
 export function rankDeals(deals: ResolvedDeal[], question: string): ResolvedDeal[] {
@@ -797,10 +1044,41 @@ export function countsSummary(deals: ResolvedDeal[]): string {
 
 /** Snapshot of the ranked deals, cut at maxChars without breaking a deal. */
 export function buildSnapshot(ranked: ResolvedDeal[], maxChars: number): string {
+  return buildSnapshotFrom(ranked, maxChars, compactDeal);
+}
+
+/** Slimmer deal shape for judgment questions: the model needs breadth
+ *  (the right candidates in view) more than full requirement text, so
+ *  eligibility and requirements are trimmed and more deals fit. */
+function compactJudgmentDeal(d: ResolvedDeal) {
+  return {
+    title: d.title,
+    track: d.track,
+    value: d.estimatedValue,
+    eligibility: truncate(d.eligibility, 70),
+    expiresOn: d.expiresOn,
+    sourceUrl: d.sourceUrl,
+    requirements: truncate(d.requirements, 60),
+  };
+}
+
+/** Judgment snapshot: same cut as buildSnapshot, slimmer per deal. */
+export function buildJudgmentSnapshot(
+  ranked: ResolvedDeal[],
+  maxChars: number,
+): string {
+  return buildSnapshotFrom(ranked, maxChars, compactJudgmentDeal);
+}
+
+function buildSnapshotFrom(
+  ranked: ResolvedDeal[],
+  maxChars: number,
+  compact: (d: ResolvedDeal) => object,
+): string {
   const parts: string[] = ["["];
   let length = 1;
   for (const d of ranked) {
-    const piece = JSON.stringify(compactDeal(d));
+    const piece = JSON.stringify(compact(d));
     const extra = piece.length + (parts.length > 1 ? 1 : 0);
     if (length + extra > maxChars && parts.length > 1) break;
     if (length + extra > maxChars) {
