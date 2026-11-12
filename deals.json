@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-11-12T19:16:17.692Z",
-  "count": 193,
+  "generatedAt": "2026-11-12T19:25:03.756Z",
+  "count": 195,
   "deals": [
     {
       "id": 1,
@@ -3088,6 +3088,38 @@
       "actionSteps": "1. Open ai4elections.risenetworks.org. 2. Prepare a working AI prototype in one of the five electoral themes. 3. Apply before 23:59 WAT on 12 November 2026. 4. Grand finale is 16 December 2026 in Lagos.",
       "verification": "pending",
       "riskNote": "Closes TODAY, 12 November 2026 at 23:59 WAT. Verified via a Techeconomy organiser report; the official site itself was not directly opened. Hybrid format: build online, finale in Lagos.",
+      "status": "active"
+    },
+    {
+      "id": 290,
+      "title": "Sir Cyril Taylor Young African Leaders Program 2027",
+      "track": "scholarships",
+      "estimatedValue": "Fully funded 12-month programme: AFS Youth Assembly in Geneva August 2027, Global Competence Certificate, workshops, seed funding for an impact project; travel and accommodation covered",
+      "valueUsd": null,
+      "eligibility": "Nigeria eligible (Sub-Saharan African country; Nigeria named among leaders in the 2025 and 2026 editions). Ages 18-35, unexpired passport, leading a social impact project preferred, able to attend the Youth Assembly in Geneva in August 2027 in person.",
+      "costType": "truly-free",
+      "expiresOn": "2026-11-19",
+      "sourceUrl": "https://www.youthassembly.org/2026/10/16/young-african-leaders-scholarships/",
+      "requirements": "Aged 18-35; from a Sub-Saharan African country; unexpired passport; demonstrable leadership qualities or track record; potential for personal and professional growth; leading a social impact project related to the sustainable development goals (preferred); able to attend the Youth Assembly in Geneva, Switzerland in person in August 2027; proficient in English (intermediate level).",
+      "actionSteps": "1. Open the official AFS Youth Assembly page. 2. Prepare leadership and impact project evidence. 3. Apply via the Google Form before 23:59 UTC on 19 November 2026. 4. Applications are reviewed first come first served, so apply early (visa processing can take months).",
+      "verification": "verified",
+      "riskNote": "Only 10 leaders selected per edition; almost 6,000 applications for the second edition. The official page says the use of AI to write the narrative is highly discouraged.",
+      "status": "active"
+    },
+    {
+      "id": 291,
+      "title": "RIDE Women's Economic Empowerment in Transport Research Grant 2026",
+      "track": "scholarships",
+      "estimatedValue": "GBP 150,000 to GBP 200,000 per project, at least 2 projects, up to 15 months",
+      "valueUsd": 202500,
+      "eligibility": "Nigeria eligible (Group 1 partner country). Institutions only: universities and research institutes, non-profit lead; not for individuals.",
+      "costType": "truly-free",
+      "expiresOn": "2026-11-20",
+      "sourceUrl": "https://ride.transport-links.com/open-call-womens-economic-empowerment-in-transport/",
+      "requirements": "Research team or consortium based at a university or research institute; research must focus on one of RIDE's partner countries (Group 1 includes Nigeria); lead institution must be non-profit and able to manage a GIZ grant; proposal on women's economic empowerment in transport (violence in transit, climate resilience, or related themes) with a clear uptake plan.",
+      "actionSteps": "1. Open the official RIDE open call page. 2. Prepare cover letter (PDF), research proposal (Word, max 4,000 words), detailed budget (Excel, GIZ template) and evidence of non-profit status. 3. Send as one zipped file to the two GIZ contacts on the page before 18:00 CET on 20 November 2026.",
+      "verification": "verified",
+      "riskNote": "Institutions only; individuals cannot apply. Budget must be in EUR (GBP 150,000 to 200,000 equals EUR 174,992 to 233,323). Questions close 12 November 2026.",
       "status": "active"
     }
   ]
