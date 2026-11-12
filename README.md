@@ -34,7 +34,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000 in your browser. For the full setup, including environment variables and the Supabase table for saved items, see [SETUP.md](SETUP.md).
+Open http://localhost:3000 in your browser.
 
 ## Configuration
 
@@ -58,7 +58,7 @@ npm run start
 
 ## Deploy to Vercel
 
-Import this repository in the Vercel dashboard, set the four environment variables above for Production, and deploy. The live site is deployed from the `main` branch. See [SETUP.md](SETUP.md) for the step-by-step version.
+Import this repository in the Vercel dashboard, set the four environment variables above for Production, and deploy. The live site is deployed from the `main` branch.
 
 ## Project structure
 
