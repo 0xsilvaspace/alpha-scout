@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSupabase } from "@/lib/supabase/server";
 import { ALL_DEALS, daysLeft, type Deal } from "@/lib/deals";
 import { FEED_URL } from "@/lib/feed";
+import { prepareDeals, type ResolvedDeal } from "@/lib/classify";
 
 const PRIMARY_MODEL = "google/gemma-4-31b-it:free";
 const FALLBACK_MODEL = "baidu/ernie-5.5-flash-preview:free";
@@ -52,7 +53,7 @@ function wordForms(w: string): string[] {
   return [w, `${w}s`];
 }
 
-function scoreDeal(d: Deal, tokens: string[]): number {
+function scoreDeal(d: ResolvedDeal, tokens: string[]): number {
   const haystack = `${d.title} ${d.track} ${d.eligibility} ${d.requirements}`.toLowerCase();
   let score = 0;
   for (const t of tokens) {
@@ -65,14 +66,14 @@ function scoreDeal(d: Deal, tokens: string[]): number {
   return score;
 }
 
-function isClosingSoon(d: Deal): boolean {
+function isClosingSoon(d: ResolvedDeal): boolean {
   const left = daysLeft(d);
   return left !== null && left >= 0 && left <= 14;
 }
 
 /** Deals ordered for this question: deadline deals first when the user
  *  asks about deadlines, then best keyword matches, then soonest expiry. */
-function rankDeals(deals: Deal[], question: string): Deal[] {
+function rankDeals(deals: ResolvedDeal[], question: string): ResolvedDeal[] {
   const tokens = tokenize(question);
   const deadlineAsked = DEADLINE_WORDS.test(question);
   const scored = deals.map((d) => ({ d, score: scoreDeal(d, tokens) }));
@@ -85,8 +86,8 @@ function rankDeals(deals: Deal[], question: string): Deal[] {
     .sort((a, b) => b.score - a.score || (daysLeft(a.d) ?? 99) - (daysLeft(b.d) ?? 99))
     .map(({ d }) => d);
   const seen = new Set<number>();
-  const ordered: Deal[] = [];
-  const push = (d: Deal) => {
+  const ordered: ResolvedDeal[] = [];
+  const push = (d: ResolvedDeal) => {
     if (!seen.has(d.id)) {
       seen.add(d.id);
       ordered.push(d);
@@ -96,7 +97,7 @@ function rankDeals(deals: Deal[], question: string): Deal[] {
   matched.forEach(push);
   if (matched.length === 0 && !deadlineAsked) {
     // Broad question (e.g. "what is listed"): a spread across tracks.
-    const byTrack = new Map<string, Deal[]>();
+    const byTrack = new Map<string, ResolvedDeal[]>();
     for (const { d } of scored) {
       const list = byTrack.get(d.track) ?? [];
       list.push(d);
@@ -117,7 +118,7 @@ function rankDeals(deals: Deal[], question: string): Deal[] {
   return ordered;
 }
 
-function compactDeal(d: Deal) {
+function compactDeal(d: ResolvedDeal) {
   return {
     title: d.title,
     track: d.track,
@@ -151,7 +152,7 @@ const TRACK_LABELS: Record<string, string> = {
   crypto: "crypto",
 };
 
-function countsSummary(deals: Deal[]): string {
+function countsSummary(deals: ResolvedDeal[]): string {
   const counts = new Map<string, number>();
   for (const d of deals) {
     counts.set(d.track, (counts.get(d.track) ?? 0) + 1);
@@ -163,7 +164,7 @@ function countsSummary(deals: Deal[]): string {
 }
 
 /** Snapshot of the ranked deals, cut at maxChars without breaking a deal. */
-function buildSnapshot(ranked: Deal[], maxChars: number): string {
+function buildSnapshot(ranked: ResolvedDeal[], maxChars: number): string {
   const parts: string[] = ["["];
   let length = 1;
   for (const d of ranked) {
@@ -344,7 +345,9 @@ export async function POST(req: Request) {
 
   const question = messages[messages.length - 1].content;
   const questionLog = question.slice(0, 80);
-  const deals = await loadDeals();
+  // Same list the site displays: dedupe and re-classify first, so the
+  // counts, ranking and snapshot all describe the same opportunities.
+  const deals = prepareDeals(await loadDeals());
   const ranked = rankDeals(deals, question);
 
   const systemBase = [
@@ -353,6 +356,7 @@ export async function POST(req: Request) {
     "Use that date when judging what is closing soon or already closed. Do not guess the date.",
     "Answer only from the opportunity list below. Summarize opportunities and brief the user on requirements, eligibility, deadlines, action steps and the official source.",
     "When the user asks about the whole list, use the counts line above the list to report the totals, and summarize by category instead of listing every item one by one. The list below is only a sample of the full list, ranked for this question.",
+    "The ranked sample below is drawn from the same list the counts describe, and earlier answers in this conversation came from that same list, so do not retract or second-guess them when the sample shows only part of the list.",
     "Never invent details, values or deadlines. If the list does not contain the answer, say so plainly and suggest checking the official source.",
     "Always include the official source link for any opportunity you mention.",
     "Keep answers short and plain.",
