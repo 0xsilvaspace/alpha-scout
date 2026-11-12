@@ -15,6 +15,7 @@ import {
   GraduationCap,
   HandCoins,
   LayoutGrid,
+  Medal,
   Trophy,
 } from "lucide-react";
 import {
@@ -51,6 +52,7 @@ const TABS: { id: Tab; label: string; icon: typeof LayoutGrid }[] = [
   { id: "grants", label: "Grants", icon: HandCoins },
   { id: "ai-tools", label: "AI Tools", icon: Bot },
   { id: "hackathons", label: "Hackathons", icon: Trophy },
+  { id: "competitions", label: "Competitions", icon: Medal },
   { id: "jobs", label: "Remote Jobs", icon: Briefcase },
   { id: "cloud", label: "Cloud", icon: Cloud },
   { id: "software", label: "Software", icon: AppWindow },
@@ -69,7 +71,7 @@ const GRANT_FILTERS: { id: GrantFilter; label: string }[] = [
 const HOW_IT_WORKS: { title: string; text: string }[] = [
   {
     title: "1. Sourced",
-    text: "We scan official sources for free scholarships, grants, hackathons, jobs and tools that are open to Nigeria.",
+    text: "We scan official sources for free scholarships, grants, hackathons, competitions, jobs and tools that are open to Nigeria.",
   },
   {
     title: "2. Checked",
@@ -216,9 +218,11 @@ export default function Home() {
       <header className="sticky top-0 z-10 border-b border-stone-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3">
           <a href="#top" className="flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-green-800 text-sm font-bold text-white">
-              A
-            </span>
+            <img
+              src="/logo.webp"
+              alt="Alpha Scout logo"
+              className="h-8 w-8 rounded-md object-cover"
+            />
             <span className="text-lg font-semibold tracking-tight text-stone-900">
               Alpha Scout
             </span>
@@ -249,8 +253,9 @@ export default function Home() {
               Free opportunities, verified and up to date.
             </h1>
             <p className="mt-4 max-w-lg text-base leading-relaxed text-stone-600">
-              Scholarships, grants, hackathons, remote jobs and free tools —
-              checked against official sources and updated every 4 hours.
+              Scholarships, grants, hackathons, competitions, remote jobs
+              and free tools — checked against official sources and updated
+              every 4 hours.
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
               <a
@@ -465,9 +470,10 @@ export default function Home() {
             ))}
           </div>
           <p className="mt-4 max-w-3xl text-sm leading-relaxed text-stone-600">
-            Grants: grants are sourced from official foundation and programme
-            pages. The funder is shown on each grant card, and the feed
-            re-checks the list every 4 hours.
+            Grants: grants are real grants from governments, industry,
+            foundations and universities. Chain-foundation builder grants
+            live under Crypto instead. The funder is shown on each grant
+            card, and the feed re-checks the list every 4 hours.
           </p>
         </section>
 

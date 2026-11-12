@@ -7,11 +7,16 @@
  * equally to the feed and the fallback, and survive future 4-hour feed
  * syncs that re-push the same raw data. Raw feed data is never edited.
  *
- * Display tracks: Scholarships, Grants, AI Tools, Hackathons, Remote Jobs,
- * Cloud, Software, Banking, Crypto. NFTs no longer exist as a tab: NFT
- * minting tools go to Software, mint events/whitelists go to Crypto, and
- * hackathons go to Hackathons. Grant-type deals are pulled out of Crypto
- * into Grants (AI Grants vs Other Grants).
+ * Display tracks: Scholarships, Grants, AI Tools, Hackathons, Competitions,
+ * Remote Jobs, Cloud, Software, Banking, Crypto. NFTs no longer exist as a
+ * tab: NFT minting tools go to Software, mint events/whitelists go to
+ * Crypto, and hackathons go to Hackathons. Grants are real grants only
+ * (government, industry, foundations, universities) — AI Grants vs Other
+ * Grants by whether they fund AI work. Chain-foundation builder grants
+ * (Solana, Ethereum, BNB, NEAR, OKX, Superteam and similar) stay in Crypto:
+ * they are ecosystem funding, not grants in the usual sense. Competition
+ * deals are detected by title keywords and beat every tab except
+ * Hackathons.
  *
  * Dedupe: each opportunity appears exactly once. Deals are grouped when
  * they share a normalised source URL, or when their normalised title key
@@ -28,6 +33,7 @@ export type DisplayTrack =
   | "grants"
   | "ai-tools"
   | "hackathons"
+  | "competitions"
   | "jobs"
   | "cloud"
   | "software"
@@ -39,6 +45,7 @@ export const DISPLAY_LABELS: Record<DisplayTrack, string> = {
   grants: "Grants",
   "ai-tools": "AI Tools",
   hackathons: "Hackathons",
+  competitions: "Competitions",
   jobs: "Remote Jobs",
   cloud: "Cloud",
   software: "Software",
@@ -61,10 +68,18 @@ export interface ResolvedDeal extends Omit<Deal, "track"> {
 /* Classification                                                      */
 /* ------------------------------------------------------------------ */
 
-const HACKATHON_RE = /hackathon|buildathon|hack-a-thon/i;
+const HACKATHON_RE =
+  /hackathon|buildathon|hack-a-thon|zecathon|robomaster|space apps|hack week/i;
+/**
+ * Competition titles. "challenge" and "games" are deliberately broad —
+ * robotics and coding competitions are named that way — but hackathons
+ * are checked first and keep their own tab.
+ */
+const COMPETITION_RE = /competition|contest|\bcup\b|games|challenge/i;
 const GRANT_RE = /grant|subsidy|subsidies/i;
 const AI_HINT_RE =
   /artificial intelligence|\bAI\b|machine learning|large language|\bLLM\b|neural|generative ai|ai agent/i;
+/** Chain-foundation / ecosystem funders: their builder grants are Crypto, not Grants. */
 const CHAIN_FUNDER_RE =
   /solana|ethereum|bnb|near|okx|superteam|base|arbitrum|polygon|avalanche|chainlink/i;
 
@@ -76,6 +91,18 @@ const FUNDERS: [RegExp, string][] = [
   [/superteam/i, "Superteam"],
   [/okx/i, "OKX"],
   [/\bnear\b/i, "NEAR"],
+  [/tony elumelu/i, "Tony Elumelu Foundation"],
+  [/anzisha/i, "Anzisha Prize"],
+  [/cartier/i, "Cartier Women's Initiative"],
+  [/smedan/i, "SMEDAN"],
+  [/\b3mtt\b/i, "3MTT"],
+  [/mtn foundation/i, "MTN Foundation"],
+  [/lingua/i, "LINGUA Africa"],
+  [/huawei/i, "Huawei"],
+  [/first robotics/i, "FIRST"],
+  [/\bvex\b/i, "VEX Robotics"],
+  [/imagine cup/i, "Microsoft"],
+  [/kaggle/i, "Kaggle"],
   [/daad/i, "DAAD"],
   [/mastercard/i, "Mastercard Foundation"],
   [/erasmus/i, "Erasmus Mundus"],
@@ -147,21 +174,25 @@ export function funderName(deal: Deal): string {
 }
 
 function grantKindFor(deal: Deal): GrantKind {
-  // Audit subsidies fund security work, not AI/building work.
+  // Audit subsidies fund security work, not AI work.
   if (/audit/i.test(deal.title)) return "other";
   const text = `${deal.title} ${deal.estimatedValue} ${deal.requirements}`;
+  // AI Grants = grants funding AI work; everything else is Other Grants.
   if (AI_HINT_RE.test(text)) return "ai";
-  // Chain-foundation builder grants (Solana, Ethereum, BNB, NEAR, OKX,
-  // Superteam) fund builders, including AI builders.
-  if (CHAIN_FUNDER_RE.test(deal.title)) return "ai";
   return "other";
 }
 
 export function resolveDeal(deal: Deal): ResolvedDeal {
   const base = { ...deal, rawTrack: deal.track, funder: funderName(deal) };
 
+  // Hackathons win over everything, including competitions.
   if (HACKATHON_RE.test(deal.title)) {
     return { ...base, track: "hackathons" };
+  }
+
+  // Competitions beat every other tab except Hackathons.
+  if (COMPETITION_RE.test(deal.title)) {
+    return { ...base, track: "competitions" };
   }
 
   if (deal.track === "nfts") {
@@ -174,6 +205,12 @@ export function resolveDeal(deal: Deal): ResolvedDeal {
   }
 
   if (GRANT_RE.test(deal.title)) {
+    // Chain-foundation builder grants are ecosystem funding: they stay
+    // in Crypto. Grants is real grants only (government, industry,
+    // foundations, universities).
+    if (CHAIN_FUNDER_RE.test(deal.title)) {
+      return { ...base, track: "crypto" };
+    }
     return { ...base, track: "grants", grantKind: grantKindFor(deal) };
   }
 
