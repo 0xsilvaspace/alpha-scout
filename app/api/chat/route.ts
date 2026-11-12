@@ -7,7 +7,7 @@ const PRIMARY_MODEL = "google/gemma-4-31b-it:free";
 const FALLBACK_MODEL = "baidu/ernie-5.5-flash-preview:free";
 const SNAPSHOT_MAX_CHARS = 8000;
 const SNAPSHOT_RETRY_CHARS = 4000;
-const MAX_TOKENS = 700;
+const MAX_TOKENS = 900;
 const FETCH_TIMEOUT_MS = 9000;
 
 interface IncomingMessage {
@@ -127,6 +127,39 @@ function compactDeal(d: Deal) {
     sourceUrl: d.sourceUrl,
     requirements: d.requirements.slice(0, 300),
   };
+}
+
+/** Today's date in the user's timezone, for the system prompt. */
+function todayLine(): string {
+  const now = new Date();
+  const fmt = (opts: Intl.DateTimeFormatOptions) =>
+    new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Lagos", ...opts }).format(now);
+  return `Today is ${fmt({ weekday: "long" })} ${fmt({ day: "numeric" })} ${fmt({ month: "long" })} ${fmt({ year: "numeric" })}.`;
+}
+
+/** Counts of the full list, by track, for the counts summary. */
+const TRACK_LABELS: Record<string, string> = {
+  scholarships: "scholarships",
+  grants: "grants",
+  hackathons: "hackathons",
+  competitions: "competitions",
+  jobs: "remote jobs",
+  "ai-tools": "AI tools",
+  cloud: "cloud",
+  software: "software",
+  banking: "banking",
+  crypto: "crypto",
+};
+
+function countsSummary(deals: Deal[]): string {
+  const counts = new Map<string, number>();
+  for (const d of deals) {
+    counts.set(d.track, (counts.get(d.track) ?? 0) + 1);
+  }
+  const parts = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([track, n]) => `${n} ${TRACK_LABELS[track] ?? track}`);
+  return `The full list has ${deals.length} opportunities: ${parts.join(", ")}.`;
 }
 
 /** Snapshot of the ranked deals, cut at maxChars without breaking a deal. */
@@ -316,14 +349,17 @@ export async function POST(req: Request) {
 
   const systemBase = [
     "You are Scout, the assistant for Alpha Scout, a site that lists free opportunities open to Nigeria: scholarships, grants, hackathons, competitions, remote jobs and free tools.",
+    todayLine(),
+    "Use that date when judging what is closing soon or already closed. Do not guess the date.",
     "Answer only from the opportunity list below. Summarize opportunities and brief the user on requirements, eligibility, deadlines, action steps and the official source.",
+    "When the user asks about the whole list, use the counts line above the list to report the totals, and summarize by category instead of listing every item one by one. The list below is only a sample of the full list, ranked for this question.",
     "Never invent details, values or deadlines. If the list does not contain the answer, say so plainly and suggest checking the official source.",
     "Always include the official source link for any opportunity you mention.",
     "Keep answers short and plain.",
     "Opportunities:",
   ].join("\n");
   const buildPrompt = (maxChars: number) =>
-    `${systemBase}\n${buildSnapshot(ranked, maxChars)}`;
+    `${systemBase}\n${countsSummary(deals)}\n${buildSnapshot(ranked, maxChars)}`;
 
   const fail = () =>
     NextResponse.json(
