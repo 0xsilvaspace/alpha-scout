@@ -290,9 +290,20 @@ async function callGemini(
   messages: { role: "user" | "assistant"; content: string }[],
   timeoutMs: number,
   maxTokens: number,
+  raceSignal?: AbortSignal,
 ): Promise<CallResult> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  if (raceSignal) {
+    // Losing the race aborts this attempt; the listener keeps the
+    // controller as the single signal the fetch watches.
+    if (raceSignal.aborted) controller.abort();
+    else raceSignal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
   const started = Date.now();
   try {
     const res = await fetch(GEMINI_URL, {
@@ -370,7 +381,9 @@ async function callGemini(
       ok: false,
       status: 0,
       errorSnippet: controller.signal.aborted
-        ? "aborted (timeout)"
+        ? raceSignal?.aborted && !timedOut
+          ? "aborted (race lost)"
+          : "aborted (timeout)"
         : String(err).slice(0, 200),
       aborted: controller.signal.aborted,
       elapsedMs: Date.now() - started,
@@ -388,9 +401,18 @@ async function callOpenRouter(
   messages: { role: "user" | "assistant"; content: string }[],
   timeoutMs: number,
   maxTokens: number,
+  raceSignal?: AbortSignal,
 ): Promise<CallResult> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  if (raceSignal) {
+    if (raceSignal.aborted) controller.abort();
+    else raceSignal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
   const started = Date.now();
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -441,7 +463,9 @@ async function callOpenRouter(
       ok: false,
       status: 0,
       errorSnippet: controller.signal.aborted
-        ? "aborted (timeout)"
+        ? raceSignal?.aborted && !timedOut
+          ? "aborted (race lost)"
+          : "aborted (timeout)"
         : String(err).slice(0, 200),
       aborted: controller.signal.aborted,
       elapsedMs: Date.now() - started,
@@ -556,12 +580,12 @@ export async function POST(req: Request) {
       { status: 502 },
     );
 
-  // Attempt chain: Gemini first, then OpenRouter primary, then OpenRouter
-  // fallback. A later attempt only starts when the previous one failed
-  // fast (rate limit, server error, failed fetch or empty reply) and
-  // enough of the function time budget is left; an attempt that burned
-  // its whole timeout ends the chain instead of starting one that
-  // cannot finish.
+  // Race: Gemini and OpenRouter Gemma start at the same time and the
+  // first one to answer wins, aborting the loser. Gemini's latency
+  // swings from ~1s to over 9s, so waiting the whole timeout on it
+  // serially left no time for the fallback. Ernie stays as a serial
+  // fallback when both raced attempts fail fast and enough of the
+  // function time budget is left.
   const chainStarted = Date.now();
   // Broad answers are short (counts plus one line per category), so a
   // small token cap keeps them fast enough to finish inside the timeout.
@@ -590,40 +614,63 @@ export async function POST(req: Request) {
   const attemptTimeout = () =>
     Math.min(FETCH_TIMEOUT_MS, FUNCTION_BUDGET_MS - (Date.now() - chainStarted) - 500);
 
+  const raceController = new AbortController();
+  const raceTimeoutMs = attemptTimeout();
+  const racers: Promise<CallResult>[] = [];
   if (geminiKey) {
-    const first = await callGemini(
-      geminiKey,
-      buildPrompt(SNAPSHOT_MAX_CHARS),
-      messages,
-      FETCH_TIMEOUT_MS,
-      maxTokens,
+    racers.push(
+      callGemini(
+        geminiKey,
+        buildPrompt(SNAPSHOT_MAX_CHARS),
+        messages,
+        raceTimeoutMs,
+        maxTokens,
+        raceController.signal,
+      ),
     );
-    if (first.ok && first.reply) {
-      return NextResponse.json({ reply: first.reply });
-    }
-    logFailure("gemini", first);
-    if (!isRetriable(first) || attemptTimeout() < 3000) {
-      return fail();
-    }
+  }
+  if (openRouterKey) {
+    racers.push(
+      callOpenRouter(
+        openRouterKey,
+        PRIMARY_MODEL,
+        buildPrompt(SNAPSHOT_RETRY_CHARS),
+        messages,
+        raceTimeoutMs,
+        maxTokens,
+        raceController.signal,
+      ),
+    );
   }
 
-  if (openRouterKey) {
-    const second = await callOpenRouter(
-      openRouterKey,
-      PRIMARY_MODEL,
-      buildPrompt(SNAPSHOT_RETRY_CHARS),
-      messages,
-      attemptTimeout(),
-      maxTokens,
-    );
-    if (second.ok && second.reply) {
-      return NextResponse.json({ reply: second.reply });
+  const settled: CallResult[] = [];
+  let remaining = racers.length;
+  const winner = await new Promise<CallResult | undefined>((resolve) => {
+    if (racers.length === 0) return resolve(undefined);
+    for (const p of racers) {
+      p.then((r) => {
+        settled.push(r);
+        if (r.ok && r.reply) {
+          raceController.abort();
+          resolve(r);
+        } else {
+          remaining -= 1;
+          if (remaining === 0) resolve(undefined);
+        }
+      }).catch(() => {
+        remaining -= 1;
+        if (remaining === 0) resolve(undefined);
+      });
     }
-    logFailure("openrouter", second);
-    if (!isRetriable(second) || attemptTimeout() < 3000) {
-      return fail();
-    }
+  });
+  if (winner?.reply) {
+    return NextResponse.json({ reply: winner.reply });
+  }
+  for (const r of settled) {
+    logFailure(r.model === GEMINI_MODEL ? "gemini" : "openrouter", r);
+  }
 
+  if (openRouterKey && settled.some(isRetriable) && attemptTimeout() >= 3000) {
     const third = await callOpenRouter(
       openRouterKey,
       FALLBACK_MODEL,
