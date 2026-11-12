@@ -34,6 +34,9 @@ import {
   type ResolvedDeal,
 } from "@/lib/classify";
 import { fetchLiveFeed } from "@/lib/feed";
+import { getBrowserSupabase } from "@/lib/supabase/client";
+import AuthPanel from "@/components/AuthPanel";
+import Chatbot from "@/components/Chatbot";
 import StatsBar from "@/components/StatsBar";
 import FilterBar, { EMPTY_FILTERS, type Filters } from "@/components/FilterBar";
 import DealCard from "@/components/DealCard";
@@ -125,10 +128,95 @@ export default function Home() {
       // Storage full or unavailable: keep the in-memory list.
     }
   }, [savedIds, savedLoaded]);
-  const toggleSave = (id: number) =>
+  const toggleSave = (id: number) => {
+    const removing = savedIds.includes(id);
     setSavedIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
+    // Signed in: mirror the change to the cloud archive as well.
+    const supabase = getBrowserSupabase();
+    if (supabase && userId) {
+      if (removing) {
+        void supabase
+          .from("saved_items")
+          .delete()
+          .eq("user_id", userId)
+          .eq("deal_id", String(id));
+      } else {
+        void supabase
+          .from("saved_items")
+          .upsert(
+            { user_id: userId, deal_id: String(id) },
+            { onConflict: "user_id,deal_id" },
+          );
+      }
+    }
+  };
+
+  // Account: email + password sign up with a 6-digit email code, and
+  // sign in. Signed-in users get their archive synced and the chatbot.
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [cloudReady, setCloudReady] = useState(false);
+  useEffect(() => {
+    const supabase = getBrowserSupabase();
+    if (!supabase) return;
+    supabase.auth.getSession().then(({ data }) => {
+      const u = data.session?.user ?? null;
+      setUserEmail(u?.email ?? null);
+      setUserId(u?.id ?? null);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        const u = session?.user ?? null;
+        setUserEmail(u?.email ?? null);
+        setUserId(u?.id ?? null);
+        if (!u) setCloudReady(false);
+      },
+    );
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // On sign-in, merge the cloud archive with this device's saved list:
+  // anything saved here that is not in the cloud gets uploaded.
+  useEffect(() => {
+    if (!userEmail || !userId || !savedLoaded || cloudReady) return;
+    const supabase = getBrowserSupabase();
+    if (!supabase) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("saved_items")
+        .select("deal_id");
+      if (cancelled) return;
+      if (error) {
+        // Cloud read failed: keep the local list only.
+        setCloudReady(true);
+        return;
+      }
+      const cloudIds = (data ?? [])
+        .map((r) => Number(r.deal_id))
+        .filter((n) => Number.isFinite(n));
+      const merged = Array.from(new Set([...savedIds, ...cloudIds]));
+      const missing = merged.filter((id) => !cloudIds.includes(id));
+      if (missing.length > 0) {
+        await supabase.from("saved_items").upsert(
+          missing.map((id) => ({ user_id: userId, deal_id: String(id) })),
+          { onConflict: "user_id,deal_id" },
+        );
+      }
+      if (!cancelled) {
+        setSavedIds(merged);
+        setCloudReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Runs once per sign-in; savedIds is the local list at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userEmail, userId, savedLoaded, cloudReady]);
 
   const formatSync = (d: Date) =>
     d.toLocaleString("en-GB", {
@@ -247,6 +335,39 @@ export default function Home() {
             </span>
           </a>
           <div className="ml-auto flex items-center gap-2 text-xs text-stone-500">
+            {userEmail ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setAuthOpen(true)}
+                  title={userEmail}
+                  className="max-w-44 truncate font-medium text-stone-700 hover:text-stone-900"
+                >
+                  {userEmail}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const supabase = getBrowserSupabase();
+                    if (supabase) await supabase.auth.signOut();
+                    setUserEmail(null);
+                    setUserId(null);
+                    setCloudReady(false);
+                  }}
+                  className="rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-medium text-stone-600 hover:border-stone-400"
+                >
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setAuthOpen(true)}
+                className="rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-medium text-stone-700 hover:border-stone-400"
+              >
+                Sign in
+              </button>
+            )}
             <span
               className={
                 "inline-block h-2 w-2 rounded-full " +
@@ -461,6 +582,18 @@ export default function Home() {
           </p>
         </footer>
       </main>
+
+      <AuthPanel
+        open={authOpen}
+        onClose={() => setAuthOpen(false)}
+        userEmail={userEmail}
+        onSignedOut={() => {
+          setUserEmail(null);
+          setUserId(null);
+          setCloudReady(false);
+        }}
+      />
+      <Chatbot signedIn={userEmail !== null} />
     </div>
   );
 }
