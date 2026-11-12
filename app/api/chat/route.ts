@@ -4,11 +4,13 @@ import { ALL_DEALS, type Deal } from "@/lib/deals";
 import { FEED_URL } from "@/lib/feed";
 import { prepareDeals } from "@/lib/classify";
 import {
+  appendMissingFieldRoles,
   appendMissingOpenScholarships,
   buildBroadSnapshot,
   buildJudgmentSnapshot,
   buildSnapshot,
   countsSummary,
+  fieldSectionDeals,
   isBroadQuestion,
   isGoodModelReply,
   isJudgmentQuestion,
@@ -537,6 +539,7 @@ export async function POST(req: Request) {
   if (winner?.reply) {
     let finalReply = winner.reply;
     let appended = 0;
+    let appendedField = 0;
     if (judgment) {
       // Deterministic guarantee: the strongest any-discipline
       // scholarships are appended when the model fails to name them,
@@ -545,15 +548,25 @@ export async function POST(req: Request) {
         winner.reply,
         openSectionDeals(ranked),
       );
-      finalReply = augmented.reply;
+      // Same guarantee for field-specific roles: the model dropped
+      // the strongest physics fit in run 14 (Atomistic Materials
+      // Modeling Expert) while naming a generic STEM role instead.
+      const fieldAugmented = appendMissingFieldRoles(
+        augmented.reply,
+        fieldSectionDeals(ranked),
+      );
+      finalReply = fieldAugmented.reply;
       appended = augmented.appended;
+      appendedField = fieldAugmented.appended;
     }
     console.log(
       "[ask-scout] answered",
       JSON.stringify({
         path: `model:${winner.model}`,
         question: questionLog,
-        ...(judgment ? { appendedScholarships: appended } : {}),
+        ...(judgment
+          ? { appendedScholarships: appended, appendedFieldRoles: appendedField }
+          : {}),
       }),
     );
     return NextResponse.json({ reply: finalReply });

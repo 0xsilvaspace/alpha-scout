@@ -1116,6 +1116,32 @@ function isFieldOpen(d: ResolvedDeal): boolean {
   return true;
 }
 
+/** Wording that restricts a listing to people who are currently
+ *  undergraduates. "Undergraduate degree" and "undergraduate
+ *  qualification" are deliberately NOT in here: they mean the
+ *  applicant must already hold a degree, i.e. a graduate-level
+ *  listing (the Mastercard Edinburgh master's scholarship says
+ *  "hold an undergraduate degree"). "student" alone is not in here
+ *  either: many graduate scholarships say students. */
+const UNDERGRAD_ONLY_RE =
+  /\b300[-\s]?level\b|\bundergraduate students?\b|\bcurrent undergraduates?\b|\bundergraduates\b/i;
+
+/** A graduate-level mention in the same text keeps the deal in,
+ *  even when it also says undergraduate: "undergraduate or graduate
+ *  students" is open to graduates. */
+const GRADUATE_MENTION_RE =
+  /\b(masters?|msc|phd|graduate|graduates|postgraduate|post-graduate|doctoral|doctorate)\b/i;
+
+/** A listing only undergraduates can take: its eligibility or
+ *  requirements restrict to current undergraduates (a level or
+ *  status) and never mention a graduate level anywhere. Conservative:
+ *  ambiguous wording keeps the deal in. Exported for testing. */
+export function isUndergraduateOnly(d: ResolvedDeal): boolean {
+  const text = `${d.eligibility} ${d.requirements}`;
+  if (!UNDERGRAD_ONLY_RE.test(text)) return false;
+  return !GRADUATE_MENTION_RE.test(text);
+}
+
 /** Whether any of the given words appears in the deal's title.
  *  A title match means the listing is about that field, not just
  *  mentioning it in a long list of fields. */
@@ -1139,7 +1165,19 @@ export function rankJudgmentShortlist(
   deals: ResolvedDeal[],
   question: string,
 ): ResolvedDeal[] {
+  // Expired listings are already out: activeDeals drops any deal whose
+  // expiresOn is before today. For graduate questions, listings only
+  // undergraduates can take are out too (see isUndergraduateOnly):
+  // the MTN Foundation Scholarship reached the model in run 14 even
+  // though its own listing says 300-level students and its 2026 cycle
+  // closed 27 Oct 2026, and the model recommended it to a physics
+  // graduate. Its expiresOn is null (the deadline lives only in the
+  // risk note), so the expired filter alone cannot catch it.
   const active = activeDeals(deals);
+  const graduateQuestion = /\bgraduates?\b/i.test(question);
+  const shortlistable = graduateQuestion
+    ? active.filter((d) => !isUndergraduateOnly(d))
+    : active;
   const tokens = tokenize(question);
   const expanded = new Set<string>(tokens);
   for (const t of tokens) {
@@ -1153,7 +1191,7 @@ export function rankJudgmentShortlist(
   // "Agricultural Sciences", and generic listings that enumerate many
   // fields ("engineering, science, law, finance...") would otherwise
   // match every field question.
-  const groupA = active
+  const groupA = shortlistable
     .map((d) => ({ d, score: scoreDeal(d, expandedTokens) }))
     .filter(
       (s) =>
@@ -1161,11 +1199,11 @@ export function rankJudgmentShortlist(
     )
     .sort((a, b) => b.score - a.score || bySoonest(a.d, b.d))
     .map((s) => s.d);
-  const groupB = active.filter(isOpenField).sort(bySoonest);
+  const groupB = shortlistable.filter(isOpenField).sort(bySoonest);
   // Open-to-any-field listings, scholarships first: for a graduate
   // asking what fits them, the open scholarships are the strongest
   // candidates, so they come before open jobs and tools.
-  const groupC = active
+  const groupC = shortlistable
     .filter(isFieldOpen)
     .sort(
       (a, b) =>
@@ -1175,7 +1213,7 @@ export function rankJudgmentShortlist(
   // Weaker field or keyword matches last: they stay in the shortlist
   // for the model to see if the snapshot ever reaches them, but they
   // do not take space from the direct matches and open listings.
-  const groupD = scoreAll(active, expandedTokens)
+  const groupD = scoreAll(shortlistable, expandedTokens)
     .filter((s) => s.score > 0)
     .map((s) => s.d);
   const seen = new Set<number>();
@@ -1491,6 +1529,109 @@ export function appendMissingOpenScholarships(
     const value = shorten(valueClause(d), 90).replace(/[.;\s]+$/, "");
     lines.push(
       `- **${shortTitle(d)}**: ${value}. ${closesClause(d)}. [Source](${d.sourceUrl})`,
+    );
+  }
+  return {
+    reply: `${reply.trimEnd()}\n\n${clean(lines.join("\n"))}`,
+    appended: missing.length,
+  };
+}
+
+/** The field-section deals of a judgment shortlist: listings about a
+ *  specific field, as opposed to the open-to-any-field section. */
+export function fieldSectionDeals(ranked: ResolvedDeal[]): ResolvedDeal[] {
+  return ranked.filter((d) => !isOpenField(d) && !isFieldOpen(d));
+}
+
+/** Words that carry no identity in a listing title: vendor names,
+ *  generic role words, levels and rates. Dropped when deriving the
+ *  phrase that identifies a deal in a model reply. */
+const GENERIC_TITLE_WORDS = new Set([
+  "mercor", "turing", "micro1", "google", "meta", "microsoft", "amazon",
+  "apple", "openai", "binance", "mastercard", "mtn", "huawei", "nasa",
+  "mlh", "kaggle", "coursera", "udemy", "deepgram", "groq", "jetbrains",
+  "github", "notion", "oracle", "cloudflare", "vultr", "near", "solana",
+  "ethereum", "bnb", "expert", "experts", "role", "roles", "remote",
+  "job", "jobs", "contract", "contracts", "specialist", "specialists",
+  "engineer", "engineers", "developer", "developers", "program",
+  "programme", "programs", "programmes", "opportunity", "opportunities",
+  "free", "paid", "full", "time", "online", "global", "worldwide",
+  "nigeria", "nigerian", "africa", "msc", "phd", "bsc", "masters",
+  "master", "undergraduate", "graduate", "hr", "hrs", "per", "week",
+  "month", "year", "senior", "junior", "lead",
+]);
+
+/** Normalize text for name matching: lowercase, punctuation and
+ *  dashes become spaces, whitespace collapsed. */
+function normalizeName(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** The words that identify a deal in a model reply: the first three
+ *  content words of its short title. Order-independent: the model
+ *  may write "Turing STEM Annotator" where the title says
+ *  "Turing: Annotator, STEM". A single content word is not enough
+ *  (a passing mention would count as naming it), so those deals fall
+ *  back to the full normalized short title. */
+function dealKeyWords(d: ResolvedDeal): string[] | null {
+  const words = normalizeName(shortTitle(d))
+    .split(" ")
+    .filter(
+      (w) => w.length > 0 && !GENERIC_TITLE_WORDS.has(w) && !/^\d+$/.test(w),
+    );
+  if (words.length >= 2) return words.slice(0, 3);
+  return null;
+}
+
+/** Whether the model reply names this deal: all of its key words
+ *  appear as whole words in the reply, or the full short title
+ *  appears for single-word deals. Errs toward "not named" (append):
+ *  a duplicate line is harmless, a missed strongest fit is not. */
+function dealNamedInReply(reply: string, d: ResolvedDeal): boolean {
+  const replyWords = new Set(
+    normalizeName(reply).split(" ").filter(Boolean),
+  );
+  const keys = dealKeyWords(d);
+  if (keys) return keys.every((w) => replyWords.has(w));
+  return normalizeName(reply).includes(normalizeName(shortTitle(d)));
+}
+
+/** Append the strongest field-specific roles the model reply failed
+ *  to name. Mirrors appendMissingOpenScholarships for the field
+ *  section: the model dropped the strongest physics fit in run 14
+ *  (Atomistic Materials Modeling Expert, $84/hr) while naming a
+ *  generic STEM role instead. The window is the top 3 by fit order,
+ *  not 2: the keyword score ranks the two generic STEM umbrella
+ *  roles above the strongest physics-specific fit (Atomistic is 3rd
+ *  in the physics shortlist), so a top-2 window would append the
+ *  generic roles and still miss it. Returns the reply unchanged when
+ *  none are missing or when the reply is a refusal. */
+export function appendMissingFieldRoles(
+  reply: string,
+  fieldDeals: ResolvedDeal[],
+): { reply: string; appended: number } {
+  const unchanged = { reply, appended: 0 };
+  if (
+    /could not answer|couldn't answer|cannot (help|answer)|unable to answer/i.test(
+      reply,
+    )
+  ) {
+    return unchanged;
+  }
+  const missing = fieldDeals
+    .slice(0, 3)
+    .filter((d) => !dealNamedInReply(reply, d));
+  if (missing.length === 0) return unchanged;
+  const lines = ["Also a strong fit for your field:"];
+  for (const d of missing) {
+    const value = shorten(valueClause(d), 90).replace(/[.;\s]+$/, "");
+    const closes = d.expiresOn ? ` ${closesClause(d)}.` : "";
+    lines.push(
+      `- **${shortTitle(d)}**: ${value}.${closes} [Source](${d.sourceUrl})`,
     );
   }
   return {
