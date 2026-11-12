@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   AlertTriangle,
+  Bookmark,
   CalendarClock,
   CheckCircle2,
   ChevronDown,
@@ -25,21 +26,33 @@ import {
 
 interface DealCardProps {
   deal: ResolvedDeal;
+  /** True when this deal is saved to the user's archive. */
+  saved?: boolean;
+  /** Toggles the saved state for this deal. */
+  onToggleSave?: () => void;
   /** Feed last-sync time (e.g. "12 Nov 2026, 12:48"), shown on grant
    * cards as the time their source was last checked. This is the feed's
    * sync time, not a per-URL live check. */
   lastSync?: string;
 }
 
-export default function DealCard({ deal, lastSync }: DealCardProps) {
+export default function DealCard({ deal, lastSync, saved = false, onToggleSave }: DealCardProps) {
   const [open, setOpen] = useState(false);
   const [reported, setReported] = useState(false);
+  // Feed text can contain em dashes; render them as commas instead.
+  const clean = (text: string) =>
+    text.replace(/\s*\u2014\s*/g, ", ").replace(/^, /, "");
+  const title = clean(deal.title);
+  const eligibility = clean(deal.eligibility);
+  const estimatedValue = clean(deal.estimatedValue);
+  const requirements = clean(deal.requirements);
+  const funder = clean(deal.funder);
   const dLeft = daysLeft(deal);
   const closingSoon = isExpiringSoon(deal);
   const steps = parseSteps(deal.actionSteps);
   // Risk notes come from the feed; a leading "URGENT:" marker is display
   // noise, so it is softened at render time without changing the data.
-  const riskNote = deal.riskNote.replace(/^URGENT:\s*/i, "");
+  const riskNote = clean(deal.riskNote.replace(/^URGENT:\s*/i, ""));
   const trackBadge =
     deal.track === "grants"
       ? `Grants · ${deal.grantKind === "ai" ? "AI" : "Other"}`
@@ -103,10 +116,26 @@ export default function DealCard({ deal, lastSync }: DealCardProps) {
             "Pending verification"
           )}
         </span>
+        <button
+          type="button"
+          onClick={onToggleSave}
+          aria-pressed={saved}
+          aria-label={saved ? "Remove from archive" : "Save to archive"}
+          title={saved ? "Saved to archive" : "Save to archive"}
+          className={
+            "inline-flex shrink-0 items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium " +
+            (saved
+              ? "bg-green-800 text-white"
+              : "border border-stone-300 text-stone-600 hover:border-stone-400")
+          }
+        >
+          <Bookmark className="h-3 w-3" fill={saved ? "currentColor" : "none"} />
+          {saved ? "Saved" : "Save"}
+        </button>
       </div>
 
       <h3 className="mt-3 text-[15px] font-semibold leading-snug text-stone-900">
-        {deal.title}
+        {title}
       </h3>
 
       <div className="mt-3 space-y-1.5 text-[13px] leading-relaxed">
@@ -115,15 +144,15 @@ export default function DealCard({ deal, lastSync }: DealCardProps) {
             Value ·{" "}
           </span>
           <span className="font-semibold text-stone-900">
-            {deal.valueUsd !== null ? formatUsd(deal.valueUsd) : "—"}
+            {deal.valueUsd !== null ? formatUsd(deal.valueUsd) : "Not stated"}
           </span>{" "}
-          <span className="text-stone-500">{deal.estimatedValue}</span>
+          <span className="text-stone-500">{estimatedValue}</span>
         </p>
         <p className="text-stone-600">
           <span className="text-xs font-medium text-stone-500">
             Eligibility ·{" "}
           </span>
-          {deal.eligibility}
+          {eligibility}
         </p>
         {deal.track === "grants" ? (
           <>
@@ -131,9 +160,9 @@ export default function DealCard({ deal, lastSync }: DealCardProps) {
               <span className="text-xs font-medium text-stone-500">
                 Funded by ·{" "}
               </span>
-              <span className="font-semibold text-stone-900">{deal.funder}</span>
+              <span className="font-semibold text-stone-900">{funder}</span>
             </p>
-            {lastSync && lastSync !== "—" ? (
+            {lastSync ? (
               <p className="text-xs text-stone-500">
                 Source checked {lastSync}
               </p>
@@ -157,7 +186,7 @@ export default function DealCard({ deal, lastSync }: DealCardProps) {
           <span className="text-xs font-medium text-stone-500">
             Requirements ·{" "}
           </span>
-          {deal.requirements}
+          {requirements}
         </p>
         {riskNote ? (
           <p className="flex items-start gap-1.5 rounded border border-stone-200 bg-stone-50 p-2 text-xs text-stone-600">
@@ -186,7 +215,7 @@ export default function DealCard({ deal, lastSync }: DealCardProps) {
                 <span className="mr-1.5 text-xs font-semibold text-green-800">
                   {i + 1}.
                 </span>
-                {step}
+                {clean(step)}
               </li>
             ))}
           </ol>
@@ -215,12 +244,12 @@ export default function DealCard({ deal, lastSync }: DealCardProps) {
           }
         >
           <Flag className="h-3.5 w-3.5" />
-          {reported ? "Report noted — thanks" : "Report expired / suspicious"}
+          {reported ? "Report noted, thanks" : "Report expired / suspicious"}
         </button>
       </div>
       {reported ? (
         <p className="mt-2 text-[11px] text-stone-500">
-          Flagged locally on this device only — no data is sent anywhere.
+          Flagged locally on this device only. No data is sent anywhere.
         </p>
       ) : null}
     </article>

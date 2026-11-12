@@ -21,7 +21,6 @@ import {
 import {
   ALL_DEALS,
   isActive,
-  isExpired,
   isExpiringSoon,
   isOpenToNigeria,
   isWorldwide,
@@ -29,7 +28,6 @@ import {
 } from "@/lib/deals";
 import {
   DISPLAY_LABELS,
-  matchesUniPod,
   prepareDeals,
   type DisplayTrack,
   type GrantKind,
@@ -79,7 +77,7 @@ const HOW_IT_WORKS: { title: string; text: string }[] = [
   },
   {
     title: "3. Updated",
-    text: "The list refreshes every 4 hours. When a deadline passes, the listing moves to the archive instead of disappearing.",
+    text: "The list refreshes every 4 hours. Save an opportunity to your archive if you want to keep it for later.",
   },
 ];
 
@@ -88,13 +86,49 @@ export default function Home() {
   const [grantFilter, setGrantFilter] = useState<GrantFilter>("all");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
-  const [lastSync, setLastSync] = useState("—");
+  const [lastSync, setLastSync] = useState("");
   // Deals start as the baked-in snapshot; the GitHub live feed replaces
   // them in place when it loads. Any feed failure keeps the snapshot.
   const [deals, setDeals] = useState<Deal[]>(ALL_DEALS);
   const [feedSource, setFeedSource] = useState<"live" | "snapshot">(
     "snapshot",
   );
+
+  // Saved opportunities (the Archive): kept in localStorage on this
+  // device only, so they survive reloads. No account, no server.
+  const [savedIds, setSavedIds] = useState<number[]>([]);
+  const [savedLoaded, setSavedLoaded] = useState(false);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("alpha-scout-saved");
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          setSavedIds(
+            parsed.filter((n): n is number => typeof n === "number"),
+          );
+        }
+      }
+    } catch {
+      // Corrupt storage: start with an empty archive.
+    }
+    setSavedLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (!savedLoaded) return;
+    try {
+      window.localStorage.setItem(
+        "alpha-scout-saved",
+        JSON.stringify(savedIds),
+      );
+    } catch {
+      // Storage full or unavailable: keep the in-memory list.
+    }
+  }, [savedIds, savedLoaded]);
+  const toggleSave = (id: number) =>
+    setSavedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
 
   const formatSync = (d: Date) =>
     d.toLocaleString("en-GB", {
@@ -125,7 +159,13 @@ export default function Home() {
   const prepared: ResolvedDeal[] = useMemo(() => prepareDeals(deals), [deals]);
 
   const activeDeals = useMemo(() => prepared.filter(isActive), [prepared]);
-  const archivedDeals = useMemo(() => prepared.filter(isExpired), [prepared]);
+  // The Archive is the user's saved list, not expired deals. Expired
+  // deals simply leave the active list; saved ones stay here even after
+  // their closing date passes.
+  const savedDeals = useMemo(
+    () => prepared.filter((d) => savedIds.includes(d.id)),
+    [prepared, savedIds],
+  );
   const expiringCount = useMemo(
     () => activeDeals.filter(isExpiringSoon).length,
     [activeDeals],
@@ -135,12 +175,12 @@ export default function Home() {
     const map = new Map<Tab, number>();
     map.set("all", activeDeals.length);
     map.set("expiring", expiringCount);
-    map.set("archive", archivedDeals.length);
+    map.set("archive", savedDeals.length);
     (Object.keys(DISPLAY_LABELS) as DisplayTrack[]).forEach((t) => {
       map.set(t, activeDeals.filter((d) => d.track === t).length);
     });
     return map;
-  }, [activeDeals, archivedDeals, expiringCount]);
+  }, [activeDeals, savedDeals, expiringCount]);
 
   const grantCounts = useMemo(() => {
     const grants = activeDeals.filter((d) => d.track === "grants");
@@ -151,7 +191,7 @@ export default function Home() {
     };
   }, [activeDeals]);
 
-  /** Funders of the grants currently in the feed, in first-seen order —
+  /** Funders of the grants currently in the feed, in first-seen order,
    * computed from the feed data at render time, never hardcoded. */
   const grantFunders = useMemo(() => {
     const seen = new Set<string>();
@@ -161,13 +201,6 @@ export default function Home() {
     return [...seen];
   }, [activeDeals]);
 
-  /** Opportunities relevant to AI UniPod UNILAG members, matched by
-   * keyword against the feed's own text (see UNIPOD_KEYWORDS). */
-  const unipodCount = useMemo(
-    () => activeDeals.filter(matchesUniPod).length,
-    [activeDeals],
-  );
-
   const visible = useMemo(() => {
     let base =
       tab === "all"
@@ -175,7 +208,7 @@ export default function Home() {
         : tab === "expiring"
           ? activeDeals.filter(isExpiringSoon)
           : tab === "archive"
-            ? archivedDeals
+            ? savedDeals
             : activeDeals.filter((d) => d.track === tab);
 
     if (tab === "grants" && grantFilter !== "all") {
@@ -195,34 +228,20 @@ export default function Home() {
     if (filters.worldwide) base = base.filter(isWorldwide);
     if (filters.freeNoCard) base = base.filter((d) => d.costType === "truly-free");
     if (filters.expiringSoon) base = base.filter(isExpiringSoon);
-    if (filters.unipod) base = base.filter(matchesUniPod);
     return base;
-  }, [tab, grantFilter, search, filters, activeDeals, archivedDeals]);
+  }, [tab, grantFilter, search, filters, activeDeals, savedDeals]);
 
   const toggleFilter = (key: keyof Filters) =>
     setFilters((f) => ({ ...f, [key]: !f[key] }));
-
-  /** From the UniPod section: show the UniPod-curated view and scroll
-   * to the list. */
-  const showUniPod = () => {
-    setTab("all");
-    setGrantFilter("all");
-    setFilters((f) => ({ ...f, unipod: true }));
-    document
-      .getElementById("opportunities")
-      ?.scrollIntoView({ behavior: "smooth" });
-  };
 
   return (
     <div className="min-h-screen bg-stone-50">
       <header className="sticky top-0 z-10 border-b border-stone-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3">
           <a href="#top" className="flex items-center gap-2">
-            <img
-              src="/logo.webp"
-              alt="Alpha Scout logo"
-              className="h-8 w-8 rounded-md object-cover"
-            />
+            <span className="block h-9 w-9 shrink-0" aria-hidden="true">
+              <Hero3D compact />
+            </span>
             <span className="text-lg font-semibold tracking-tight text-stone-900">
               Alpha Scout
             </span>
@@ -235,9 +254,11 @@ export default function Home() {
               }
             />
             {feedSource === "live" ? "Live feed" : "Offline snapshot"}
-            <span className="hidden text-stone-400 sm:inline">
-              · Updated {lastSync}
-            </span>
+            {lastSync ? (
+              <span className="hidden text-stone-400 sm:inline">
+                · Updated {lastSync}
+              </span>
+            ) : null}
           </div>
         </div>
       </header>
@@ -254,7 +275,7 @@ export default function Home() {
             </h1>
             <p className="mt-4 max-w-lg text-base leading-relaxed text-stone-600">
               Scholarships, grants, hackathons, competitions, remote jobs
-              and free tools — checked against official sources and updated
+              and free tools, checked against official sources and updated
               every 4 hours.
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
@@ -286,56 +307,10 @@ export default function Home() {
         <StatsBar
           activeCount={activeDeals.length}
           expiringCount={expiringCount}
-          archivedCount={archivedDeals.length}
+          savedCount={savedDeals.length}
           lastSync={lastSync}
           feedSource={feedSource}
         />
-
-        {/* For AI UniPod UNILAG */}
-        <section
-          aria-label="For AI UniPod UNILAG"
-          className="mt-8 rounded-lg border border-stone-200 bg-white p-5 md:p-6"
-        >
-          <h2 className="text-lg font-semibold tracking-tight text-stone-900">
-            For AI UniPod UNILAG
-          </h2>
-          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-stone-600">
-            AI UniPod UNILAG launched on 7 April 2026, the first AI UniPod in
-            Nigeria. It is a collaboration between the Federal Government,
-            UNDP and the University of Lagos, and part of UNDP&apos;s
-            Timbuktoo project.
-          </p>
-          <ul className="mt-3 flex flex-wrap gap-2">
-            {[
-              "Design Lab",
-              "Virtual Reality Lab",
-              "AI & Robotics Lab",
-              "Prototype Lab (Makerspace)",
-            ].map((lab) => (
-              <li
-                key={lab}
-                className="rounded-full border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs font-medium text-stone-700"
-              >
-                {lab}
-              </li>
-            ))}
-          </ul>
-          <p className="mt-3 max-w-3xl text-sm leading-relaxed text-stone-600">
-            The Prototype Lab is the Makerspace, where members prototype and
-            fabricate with 3D printers, resin printers and laser cutters.
-            Members use Alpha Scout to find scholarships, grants, hackathons
-            and free tools for their projects.
-          </p>
-          <button
-            type="button"
-            onClick={showUniPod}
-            className="mt-4 inline-flex items-center gap-2 rounded-md bg-green-800 px-4 py-2.5 text-sm font-medium text-white hover:bg-green-900"
-          >
-            See opportunities for UniPod members
-            <span className="text-xs opacity-80">({unipodCount})</span>
-            <ArrowRight className="h-4 w-4" />
-          </button>
-        </section>
 
         {/* Opportunities */}
         <section id="opportunities" className="scroll-mt-20 pt-8">
@@ -420,16 +395,14 @@ export default function Home() {
             />
           </div>
 
-          {tab === "archive" && archivedDeals.length === 0 ? (
+          {tab === "archive" && savedDeals.length === 0 ? (
             <div className="mt-4 rounded-lg border border-dashed border-stone-300 bg-white p-8 text-center">
               <Archive className="mx-auto h-8 w-8 text-stone-400" />
               <h2 className="mt-3 text-sm font-semibold text-stone-900">
                 Archive is empty
               </h2>
               <p className="mx-auto mt-1 max-w-md text-sm text-stone-500">
-                No opportunity has expired yet. When one passes its closing
-                date it moves here automatically instead of being deleted, so
-                you can still see what it offered and when it closed.
+                Tap Save on any opportunity to keep it here for later.
               </p>
             </div>
           ) : visible.length === 0 ? (
@@ -445,7 +418,13 @@ export default function Home() {
           ) : (
             <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {visible.map((deal) => (
-                <DealCard key={deal.id} deal={deal} lastSync={lastSync} />
+                <DealCard
+                  key={deal.id}
+                  deal={deal}
+                  lastSync={lastSync}
+                  saved={savedIds.includes(deal.id)}
+                  onToggleSave={() => toggleSave(deal.id)}
+                />
               ))}
             </div>
           )}
@@ -469,27 +448,16 @@ export default function Home() {
               </div>
             ))}
           </div>
-          <p className="mt-4 max-w-3xl text-sm leading-relaxed text-stone-600">
-            Grants: grants are real grants from governments, industry,
-            foundations and universities. Chain-foundation builder grants
-            live under Crypto instead. The funder is shown on each grant
-            card, and the feed re-checks the list every 4 hours.
-          </p>
         </section>
 
         <footer className="border-t border-stone-200 py-6 text-center text-xs leading-relaxed text-stone-500">
           <p className="text-xs font-medium text-stone-600">A note</p>
           <p className="mx-auto mt-1 max-w-2xl">
-            Always verify eligibility, deadlines and terms on the official
-            source before applying — listings change, and some sources are
-            roundups, not the official page. No opportunity on Alpha Scout
-            requires payment to take part; never pay an application, deposit
-            or “activation” fee for a listing marked free.
-          </p>
-          <p className="mt-2 text-[11px]">
-            Alpha Scout · {activeDeals.length} active opportunities · The
-            deals feed refreshes from GitHub every 4 hours; if the feed is
-            unreachable the page shows the baked-in offline snapshot instead.
+            Always check eligibility, deadlines and terms on the official
+            source before you apply. Listings change, and some sources are
+            roundups, not the official page. Nothing on Alpha Scout asks
+            you to pay to take part. Never pay an application, deposit or
+            activation fee for a listing marked free.
           </p>
         </footer>
       </main>

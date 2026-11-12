@@ -4,12 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 /**
- * Alpha Scout hero visual — a slowly rotating wireframe globe with a
+ * Alpha Scout hero visual: a slowly rotating wireframe globe with a
  * sparse field of points, in muted deep-green/grey on the light page.
  * Lightweight (no textures), pauses when off-screen, and falls back to
- * a static ring graphic when WebGL is unavailable.
+ * a static ring graphic when WebGL is unavailable. With `compact` it
+ * renders the same globe at header-mark size (36px) for the wordmark.
  */
-export default function Hero3D() {
+export default function Hero3D({ compact = false }: { compact?: boolean }) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [webglFailed, setWebglFailed] = useState(false);
 
@@ -45,7 +46,8 @@ export default function Hero3D() {
       0.1,
       100,
     );
-    camera.position.z = 6.2;
+    // Pull back a little at mark size so the orbit ring fits the square.
+    camera.position.z = compact ? 7.4 : 6.2;
 
     const group = new THREE.Group();
     scene.add(group);
@@ -172,6 +174,15 @@ export default function Hero3D() {
 
   if (webglFailed) {
     // Static fallback: calm concentric rings, no error, no blank box.
+    if (compact) {
+      return (
+        <div aria-hidden="true" className="relative h-9 w-9">
+          <div className="absolute inset-0 rounded-full border border-green-800/30" />
+          <div className="absolute inset-2 rounded-full border border-green-800/20" />
+          <div className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-green-800/60" />
+        </div>
+      );
+    }
     return (
       <div
         aria-hidden="true"
@@ -190,7 +201,7 @@ export default function Hero3D() {
     <div
       ref={mountRef}
       aria-hidden="true"
-      className="h-64 w-full md:h-80 lg:h-96"
+      className={compact ? "h-9 w-9" : "h-64 w-full md:h-80 lg:h-96"}
     />
   );
 }

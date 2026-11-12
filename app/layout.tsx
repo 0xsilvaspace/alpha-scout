@@ -2,10 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Alpha Scout — Free Opportunities, Verified",
+  title: "Alpha Scout: Free Opportunities, Verified",
   description:
-    "Free scholarships, grants, hackathons, remote jobs, AI tools, cloud and software — open to Nigerians. Checked against official sources and updated every 4 hours.",
-  icons: { icon: "/logo.webp" },
+    "Free scholarships, grants, hackathons, remote jobs, AI tools, cloud and software, open to Nigerians. Checked against official sources and updated every 4 hours.",
 };
 
 export default function RootLayout({

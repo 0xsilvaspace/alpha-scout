@@ -1,5 +1,5 @@
 /**
- * ALPHA SCOUT — display classification and dedupe.
+ * ALPHA SCOUT: display classification and dedupe.
  *
  * The live feed (and the baked-in fallback) carry the Space's raw tracks
  * (scholarships, jobs, ai-tools, crypto, nfts, banking, cloud, software).
@@ -11,8 +11,8 @@
  * Remote Jobs, Cloud, Software, Banking, Crypto. NFTs no longer exist as a
  * tab: NFT minting tools go to Software, mint events/whitelists go to
  * Crypto, and hackathons go to Hackathons. Grants are real grants only
- * (government, industry, foundations, universities) — AI Grants vs Other
- * Grants by whether they fund AI work. Chain-foundation builder grants
+ * (government, industry, foundations, universities), split into
+ * AI Grants and Other Grants by whether they fund AI work. Chain-foundation builder grants
  * (Solana, Ethereum, BNB, NEAR, OKX, Superteam and similar) stay in Crypto:
  * they are ecosystem funding, not grants in the usual sense. Competition
  * deals are detected by title keywords and beat every tab except
@@ -71,8 +71,8 @@ export interface ResolvedDeal extends Omit<Deal, "track"> {
 const HACKATHON_RE =
   /hackathon|buildathon|hack-a-thon|zecathon|robomaster|space apps|hack week/i;
 /**
- * Competition titles. "challenge" and "games" are deliberately broad —
- * robotics and coding competitions are named that way — but hackathons
+ * Competition titles. "challenge" and "games" are deliberately broad
+ * (robotics and coding competitions are named that way), but hackathons
  * are checked first and keep their own tab.
  */
 const COMPETITION_RE = /competition|contest|\bcup\b|games|challenge/i;
@@ -83,7 +83,7 @@ const AI_HINT_RE =
 const CHAIN_FUNDER_RE =
   /solana|ethereum|bnb|near|okx|superteam|base|arbitrum|polygon|avalanche|chainlink/i;
 
-/** [pattern, display name] — first match wins. */
+/** [pattern, display name]: first match wins. */
 const FUNDERS: [RegExp, string][] = [
   [/solana/i, "Solana Foundation"],
   [/ethereum foundation/i, "Ethereum Foundation"],
@@ -238,7 +238,7 @@ const FILLER = new Set([
 
 /**
  * Single-product brands whose listings differ only in their descriptor
- * ("Grey — Free USD account", "Grey — Free multi-currency account").
+ * ("Grey: Free USD account", "Grey: Free multi-currency account").
  * Keyed by the brand token at the start of the title.
  */
 const BRAND_ALIASES: [RegExp, string][] = [
@@ -294,17 +294,17 @@ function tokensOf(fragment: string): string[] {
 
 /**
  * Canonical dedupe key for a deal title, or null when no key applies.
- * Uses the part before a " — " / " – " / " + " / " via " descriptor only
- * when that part still names the opportunity (2+ significant tokens);
+ * Uses the part before a colon, dash, plus or "via" descriptor, but
+ * only when that part still names the opportunity (2+ significant tokens);
  * otherwise the whole title is used, so short brand-first titles
- * ("Mercor — …") never collapse unrelated listings from the same brand.
+ * ("Mercor: ...") never collapse unrelated listings from the same brand.
  * A plain hyphen is NOT a descriptor cut: titles like "DAAD … - MSc
  * Electrical Power Systems, University of Rwanda" carry the distinguishing
  * detail after the hyphen.
  */
 export function titleKey(title: string): string | null {
   const noParens = title.replace(/\([^)]*\)/g, " ");
-  const cut = noParens.split(/\s+(?:—|–)\s+|\s*\+\s+|\s+via\s+/i)[0] ?? "";
+  const cut = noParens.split(/\s+(?:\u2014|\u2013|:)\s+|\s*\+\s+|\s+via\s+/i)[0] ?? "";
   const cutTokens = tokensOf(cut);
   const source = cutTokens.length >= 2 ? cut : noParens;
   const tokens = [...new Set(tokensOf(source))].sort();
@@ -421,47 +421,4 @@ export function dedupeDeals(deals: Deal[]): Deal[] {
 /** Full load path: dedupe first, then re-classify each kept deal. */
 export function prepareDeals(deals: Deal[]): ResolvedDeal[] {
   return dedupeDeals(deals).map(resolveDeal);
-}
-
-/* ------------------------------------------------------------------ */
-/* AI UniPod UNILAG curation                                           */
-/* ------------------------------------------------------------------ */
-
-/**
- * Keywords that mark an opportunity as relevant to AI UniPod UNILAG
- * members, matched against the deal's title, requirements and benefit
- * text. The list is deliberately narrow and transparent: it covers the
- * UniPod's work (robotics, making and fabrication, AI training) and the
- * kinds of support its members use (student cloud credits, hackathons,
- * builder grants). Nothing is invented — a deal matches only if the
- * feed's own text contains one of these terms.
- */
-export const UNIPOD_KEYWORDS: string[] = [
-  "robotics",
-  "robot",
-  "maker",
-  "makerspace",
-  "hardware",
-  "3d print",
-  "laser cut",
-  "ai training",
-  "machine learning",
-  "artificial intelligence",
-  "student cloud",
-  "hackathon",
-  "builder grant",
-  "embedded",
-  "arduino",
-  "esp32",
-  "prototyping",
-  "fabrication",
-  "computer vision",
-];
-
-export function matchesUniPod(
-  deal: Pick<Deal, "title" | "requirements" | "estimatedValue" | "eligibility">,
-): boolean {
-  const hay =
-    `${deal.title} ${deal.requirements} ${deal.estimatedValue} ${deal.eligibility}`.toLowerCase();
-  return UNIPOD_KEYWORDS.some((k) => hay.includes(k));
 }

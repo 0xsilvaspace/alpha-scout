@@ -1,5 +1,5 @@
 /**
- * ALPHA SCOUT — GitHub live deals feed.
+ * ALPHA SCOUT: GitHub live deals feed.
  *
  * The deployed app fetches this JSON at runtime from the public
  * `0xsilvaspace/alpha-scout` GitHub repo (raw.githubusercontent.com).

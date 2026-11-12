@@ -1,7 +1,7 @@
 interface StatsBarProps {
   activeCount: number;
   expiringCount: number;
-  archivedCount: number;
+  savedCount: number;
   lastSync: string;
   /** "live" = deals came from the GitHub feed; "snapshot" = baked-in fallback. */
   feedSource: "live" | "snapshot";
@@ -10,7 +10,7 @@ interface StatsBarProps {
 export default function StatsBar({
   activeCount,
   expiringCount,
-  archivedCount,
+  savedCount,
   lastSync,
   feedSource,
 }: StatsBarProps) {
@@ -22,7 +22,7 @@ export default function StatsBar({
           {activeCount}
         </div>
         <div className="mt-1 text-xs text-stone-500">
-          {archivedCount} archived · {expiringCount} closing soon
+          {savedCount} saved · {expiringCount} closing soon
         </div>
       </div>
 
