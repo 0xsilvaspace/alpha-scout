@@ -1,43 +1,32 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --color-accent: #166534;
+  --color-accent-soft: #f0fdf4;
+  --color-ink: #1c1917;
+  --color-ink-soft: #57534e;
+  --color-ink-faint: #a8a29e;
+  --color-line: #e7e5e4;
+  --color-paper: #fafaf9;
 }
 
 html {
-  color-scheme: dark;
+  color-scheme: light;
+  scroll-behavior: smooth;
 }
 
 body {
-  background-color: #09090b;
-  color: #e4e4e7;
+  background-color: #fafaf9;
+  color: #1c1917;
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Subtle terminal grid backdrop */
-.terminal-bg {
-  background-image:
-    linear-gradient(rgba(16, 185, 129, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(16, 185, 129, 0.04) 1px, transparent 1px);
-  background-size: 28px 28px;
-}
-
-.glow-emerald {
-  box-shadow: 0 0 18px rgba(16, 185, 129, 0.35), 0 0 42px rgba(16, 185, 129, 0.12);
-}
-
-.glow-text {
-  text-shadow: 0 0 12px rgba(16, 185, 129, 0.65);
-}
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.8); }
-}
-
-.pulse-dot {
-  animation: pulse-dot 1.6s ease-in-out infinite;
+::selection {
+  background: #dcfce7;
+  color: #14532d;
 }
 
 ::-webkit-scrollbar {
@@ -45,12 +34,12 @@ body {
   height: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: #18181b;
+  background: #f5f5f4;
 }
 ::-webkit-scrollbar-thumb {
-  background: #3f3f46;
+  background: #d6d3d1;
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #10b981;
+  background: #a8a29e;
 }

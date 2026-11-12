@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   AppWindow,
   Archive,
+  ArrowRight,
   Banknote,
   Bot,
   Briefcase,
@@ -13,7 +15,6 @@ import {
   GraduationCap,
   HandCoins,
   LayoutGrid,
-  Radar,
   Trophy,
 } from "lucide-react";
 import {
@@ -37,6 +38,9 @@ import StatsBar from "@/components/StatsBar";
 import FilterBar, { EMPTY_FILTERS, type Filters } from "@/components/FilterBar";
 import DealCard from "@/components/DealCard";
 
+// The 3D globe renders only in the browser, after the page loads.
+const Hero3D = dynamic(() => import("@/components/Hero3D"), { ssr: false });
+
 type Tab = "all" | DisplayTrack | "expiring" | "archive";
 type GrantFilter = "all" | GrantKind;
 
@@ -59,6 +63,21 @@ const GRANT_FILTERS: { id: GrantFilter; label: string }[] = [
   { id: "all", label: "All grants" },
   { id: "ai", label: "AI grants" },
   { id: "other", label: "Other grants" },
+];
+
+const HOW_IT_WORKS: { title: string; text: string }[] = [
+  {
+    title: "1. Sourced",
+    text: "We scan official sources for free scholarships, grants, hackathons, jobs and tools that are open to Nigeria.",
+  },
+  {
+    title: "2. Checked",
+    text: "Each listing is checked for eligibility, cost and deadline before it appears here. Nothing on this page requires payment.",
+  },
+  {
+    title: "3. Updated",
+    text: "The list refreshes every 4 hours. When a deadline passes, the listing moves to the archive instead of disappearing.",
+  },
 ];
 
 export default function Home() {
@@ -163,32 +182,72 @@ export default function Home() {
     setFilters((f) => ({ ...f, [key]: !f[key] }));
 
   return (
-    <div className="terminal-bg min-h-screen">
-      <header className="sticky top-0 z-10 border-b border-zinc-800 bg-zinc-950/90 backdrop-blur">
+    <div className="min-h-screen bg-stone-50">
+      <header className="sticky top-0 z-10 border-b border-stone-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-md border border-emerald-500/50 bg-emerald-500/10">
-              <Radar className="h-5 w-5 text-emerald-400" />
+          <a href="#top" className="flex items-center gap-2">
+            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-green-800 text-sm font-bold text-white">
+              A
             </span>
-            <div>
-              <h1 className="font-mono text-lg font-bold leading-none tracking-tight text-zinc-50">
-                ALPHA<span className="text-emerald-400 glow-text"> SCOUT</span>
-              </h1>
-              <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-                Global Zero-Cost Intelligence Terminal
-              </p>
-            </div>
-          </div>
-          <div className="ml-auto flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5">
-            <span className="pulse-dot h-2 w-2 rounded-full bg-emerald-400 glow-emerald" />
-            <span className="font-mono text-xs font-semibold text-emerald-300">
-              System Status: Online / Auto-Syncing
+            <span className="text-lg font-semibold tracking-tight text-stone-900">
+              Alpha Scout
+            </span>
+          </a>
+          <div className="ml-auto flex items-center gap-2 text-xs text-stone-500">
+            <span
+              className={
+                "inline-block h-2 w-2 rounded-full " +
+                (feedSource === "live" ? "bg-green-700" : "bg-stone-400")
+              }
+            />
+            {feedSource === "live" ? "Live feed" : "Offline snapshot"}
+            <span className="hidden text-stone-400 sm:inline">
+              · Updated {lastSync}
             </span>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl space-y-4 px-4 py-5">
+      <main id="top" className="mx-auto max-w-7xl px-4">
+        {/* Hero */}
+        <section className="grid items-center gap-6 py-10 md:grid-cols-2 md:py-14">
+          <div>
+            <p className="text-sm font-medium text-green-800">
+              Free opportunities, open to Nigeria
+            </p>
+            <h1 className="mt-3 text-4xl font-semibold leading-tight tracking-tight text-stone-900 md:text-5xl">
+              Free opportunities, verified and up to date.
+            </h1>
+            <p className="mt-4 max-w-lg text-base leading-relaxed text-stone-600">
+              Scholarships, grants, hackathons, remote jobs and free tools —
+              checked against official sources and updated every 4 hours.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <a
+                href="#opportunities"
+                className="inline-flex items-center gap-2 rounded-md bg-green-800 px-4 py-2.5 text-sm font-medium text-white hover:bg-green-900"
+              >
+                Browse opportunities
+                <ArrowRight className="h-4 w-4" />
+              </a>
+              <a
+                href="#how-it-works"
+                className="inline-flex items-center gap-2 rounded-md border border-stone-300 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 hover:border-stone-400"
+              >
+                How it works
+              </a>
+            </div>
+            <p className="mt-4 text-sm text-stone-500">
+              {activeDeals.length} active opportunities · {expiringCount}{" "}
+              closing soon
+            </p>
+          </div>
+          <div className="hidden sm:block">
+            <Hero3D />
+          </div>
+        </section>
+
+        {/* Stats */}
         <StatsBar
           activeCount={activeDeals.length}
           expiringCount={expiringCount}
@@ -197,126 +256,146 @@ export default function Home() {
           feedSource={feedSource}
         />
 
-        <nav
-          aria-label="Deal categories"
-          className="flex gap-2 overflow-x-auto pb-1"
-        >
-          {TABS.map(({ id, label, icon: Icon }) => {
-            const active = tab === id;
-            const count = counts.get(id) ?? 0;
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => {
-                  setTab(id);
-                  if (id !== "grants") setGrantFilter("all");
-                }}
-                aria-pressed={active}
-                className={
-                  "flex shrink-0 items-center gap-1.5 rounded-md border px-3 py-2 font-mono text-xs font-semibold whitespace-nowrap " +
-                  (active
-                    ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-300 glow-emerald"
-                    : "border-zinc-800 bg-zinc-900/70 text-zinc-300 hover:border-zinc-600")
-                }
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {label}
-                <span
+        {/* Opportunities */}
+        <section id="opportunities" className="scroll-mt-20 pt-8">
+          <nav
+            aria-label="Categories"
+            className="flex gap-1 overflow-x-auto border-b border-stone-200"
+          >
+            {TABS.map(({ id, label, icon: Icon }) => {
+              const active = tab === id;
+              const count = counts.get(id) ?? 0;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => {
+                    setTab(id);
+                    if (id !== "grants") setGrantFilter("all");
+                  }}
+                  aria-pressed={active}
                   className={
-                    "rounded px-1.5 py-0.5 text-[10px] " +
-                    (active ? "bg-emerald-500/25 text-emerald-200" : "bg-zinc-800 text-zinc-400")
+                    "flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-sm " +
+                    (active
+                      ? "border-green-800 font-semibold text-stone-900"
+                      : "border-transparent font-normal text-stone-500 hover:text-stone-800")
                   }
                 >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
-        </nav>
+                  <Icon className="h-4 w-4" />
+                  {label}
+                  <span className="text-xs text-stone-400">{count}</span>
+                </button>
+              );
+            })}
+          </nav>
 
-        {tab === "grants" ? (
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Grant types">
-            {GRANT_FILTERS.filter((g) => grantCounts[g.id] > 0).map(
-              ({ id, label }) => {
-                const active = grantFilter === id;
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => setGrantFilter(id)}
-                    className={
-                      "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-mono text-xs font-semibold " +
-                      (active
-                        ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-300"
-                        : "border-zinc-700 bg-zinc-950 text-zinc-300 hover:border-zinc-500")
-                    }
-                  >
-                    {label}
-                    <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
-                      {grantCounts[id]}
-                    </span>
-                  </button>
-                );
-              },
-            )}
-          </div>
-        ) : null}
+          {tab === "grants" ? (
+            <div
+              className="mt-4 flex flex-wrap gap-2"
+              role="group"
+              aria-label="Grant types"
+            >
+              {GRANT_FILTERS.filter((g) => grantCounts[g.id] > 0).map(
+                ({ id, label }) => {
+                  const active = grantFilter === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setGrantFilter(id)}
+                      className={
+                        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium " +
+                        (active
+                          ? "border-green-800 bg-green-800 text-white"
+                          : "border-stone-300 bg-white text-stone-600 hover:border-stone-400")
+                      }
+                    >
+                      {label}
+                      <span className="text-[11px] opacity-70">
+                        {grantCounts[id]}
+                      </span>
+                    </button>
+                  );
+                },
+              )}
+            </div>
+          ) : null}
 
-        <FilterBar
-          search={search}
-          onSearchChange={setSearch}
-          filters={filters}
-          onToggle={toggleFilter}
-          resultCount={visible.length}
-        />
+          <div className="mt-4">
+            <FilterBar
+              search={search}
+              onSearchChange={setSearch}
+              filters={filters}
+              onToggle={toggleFilter}
+              resultCount={visible.length}
+            />
+          </div>
 
-        {tab === "archive" && archivedDeals.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-zinc-700 bg-zinc-900/50 p-8 text-center">
-            <Archive className="mx-auto h-8 w-8 text-zinc-500" />
-            <h2 className="mt-3 font-mono text-sm font-bold text-zinc-200">
-              Archive is empty
-            </h2>
-            <p className="mx-auto mt-1 max-w-md text-sm text-zinc-400">
-              No deal has expired yet. When a deal passes its expiry date it
-              moves here automatically instead of being deleted, so you can
-              still see what it offered and when it closed.
-            </p>
-          </div>
-        ) : visible.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-zinc-700 bg-zinc-900/50 p-8 text-center">
-            <h2 className="font-mono text-sm font-bold text-zinc-200">
-              No deals match this view
-            </h2>
-            <p className="mx-auto mt-1 max-w-md text-sm text-zinc-400">
-              Try clearing a filter, switching tabs, or searching for a
-              different keyword.
-            </p>
-          </div>
-        ) : (
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {visible.map((deal) => (
-              <DealCard key={deal.id} deal={deal} />
+          {tab === "archive" && archivedDeals.length === 0 ? (
+            <div className="mt-4 rounded-lg border border-dashed border-stone-300 bg-white p-8 text-center">
+              <Archive className="mx-auto h-8 w-8 text-stone-400" />
+              <h2 className="mt-3 text-sm font-semibold text-stone-900">
+                Archive is empty
+              </h2>
+              <p className="mx-auto mt-1 max-w-md text-sm text-stone-500">
+                No opportunity has expired yet. When one passes its closing
+                date it moves here automatically instead of being deleted, so
+                you can still see what it offered and when it closed.
+              </p>
+            </div>
+          ) : visible.length === 0 ? (
+            <div className="mt-4 rounded-lg border border-dashed border-stone-300 bg-white p-8 text-center">
+              <h2 className="text-sm font-semibold text-stone-900">
+                No opportunities match this view
+              </h2>
+              <p className="mx-auto mt-1 max-w-md text-sm text-stone-500">
+                Try clearing a filter, switching tabs, or searching for a
+                different keyword.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {visible.map((deal) => (
+                <DealCard key={deal.id} deal={deal} />
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* How it works */}
+        <section id="how-it-works" className="scroll-mt-20 border-t border-stone-200 py-10">
+          <h2 className="text-xl font-semibold tracking-tight text-stone-900">
+            How it works
+          </h2>
+          <div className="mt-5 grid gap-4 md:grid-cols-3">
+            {HOW_IT_WORKS.map(({ title, text }) => (
+              <div
+                key={title}
+                className="rounded-lg border border-stone-200 bg-white p-4"
+              >
+                <h3 className="text-sm font-semibold text-stone-900">{title}</h3>
+                <p className="mt-1.5 text-sm leading-relaxed text-stone-600">
+                  {text}
+                </p>
+              </div>
             ))}
-          </section>
-        )}
+          </div>
+        </section>
 
-        <footer className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4 text-center text-xs leading-relaxed text-zinc-500">
-          <p className="font-mono text-[11px] uppercase tracking-widest text-zinc-400">
-            Disclaimer
-          </p>
-          <p className="mt-1">
+        <footer className="border-t border-stone-200 py-6 text-center text-xs leading-relaxed text-stone-500">
+          <p className="text-xs font-medium text-stone-600">A note</p>
+          <p className="mx-auto mt-1 max-w-2xl">
             Always verify eligibility, deadlines and terms on the official
             source before applying — listings change, and some sources are
-            roundups, not the official page. No deal on ALPHA SCOUT requires
-            payment to participate; never pay an application, deposit or
-            “activation” fee for a listing marked free.
+            roundups, not the official page. No opportunity on Alpha Scout
+            requires payment to take part; never pay an application, deposit
+            or “activation” fee for a listing marked free.
           </p>
-          <p className="mt-2 font-mono text-[11px]">
-            ALPHA SCOUT · {activeDeals.length} active deals · Live deals feed
-            refreshes from GitHub every 4 hours; if the feed is unreachable
-            the page shows the baked-in offline snapshot instead.
+          <p className="mt-2 text-[11px]">
+            Alpha Scout · {activeDeals.length} active opportunities · The
+            deals feed refreshes from GitHub every 4 hours; if the feed is
+            unreachable the page shows the baked-in offline snapshot instead.
           </p>
         </footer>
       </main>

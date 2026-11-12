@@ -25,8 +25,8 @@ interface FilterBarProps {
 const TOGGLES: { key: keyof Filters; label: string; icon: typeof Globe }[] = [
   { key: "nigeria", label: "Open to Nigeria", icon: MapPin },
   { key: "worldwide", label: "Worldwide", icon: Globe },
-  { key: "freeNoCard", label: "100% Free (No Card)", icon: ShieldCheck },
-  { key: "expiringSoon", label: "Expiring Soon (<48h)", icon: Clock },
+  { key: "freeNoCard", label: "Free, no card", icon: ShieldCheck },
+  { key: "expiringSoon", label: "Closing soon", icon: Clock },
 ];
 
 export default function FilterBar({
@@ -37,21 +37,21 @@ export default function FilterBar({
   resultCount,
 }: FilterBarProps) {
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900/70 p-3">
+    <div className="flex flex-col gap-3 rounded-lg border border-stone-200 bg-white p-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <label className="relative flex-1">
-          <span className="sr-only">Search deals</span>
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+          <span className="sr-only">Search opportunities</span>
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" />
           <input
             type="search"
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Search title, requirement, benefit…"
-            className="w-full rounded-md border border-zinc-700 bg-zinc-950 py-2 pl-9 pr-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            className="w-full rounded-md border border-stone-300 bg-white py-2 pl-9 pr-3 text-sm text-stone-900 placeholder:text-stone-400 focus:border-green-800 focus:outline-none focus:ring-1 focus:ring-green-800"
           />
         </label>
-        <span className="font-mono text-xs text-zinc-400">
-          {resultCount} deal{resultCount === 1 ? "" : "s"} shown
+        <span className="text-xs text-stone-500">
+          {resultCount} {resultCount === 1 ? "opportunity" : "opportunities"} shown
         </span>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -65,8 +65,8 @@ export default function FilterBar({
               onClick={() => onToggle(key)}
               className={
                 active
-                  ? "inline-flex items-center gap-1.5 rounded-full border border-emerald-500/60 bg-emerald-500/15 px-3 py-1.5 font-mono text-xs font-semibold text-emerald-300"
-                  : "inline-flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-300 hover:border-zinc-500"
+                  ? "inline-flex items-center gap-1.5 rounded-full border border-green-800 bg-green-800 px-3 py-1.5 text-xs font-medium text-white"
+                  : "inline-flex items-center gap-1.5 rounded-full border border-stone-300 bg-white px-3 py-1.5 text-xs text-stone-600 hover:border-stone-400"
               }
             >
               <Icon className="h-3.5 w-3.5" />

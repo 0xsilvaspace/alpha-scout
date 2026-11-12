@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ALPHA SCOUT — Global Zero-Cost Intelligence Terminal",
+  title: "Alpha Scout — Free Opportunities, Verified",
   description:
-    "Free global opportunities — scholarships, grants, hackathons, remote jobs, AI credits, crypto, banking, cloud and software — open to Nigerians. No deal requires payment.",
+    "Free scholarships, grants, hackathons, remote jobs, AI tools, cloud and software — open to Nigerians. Checked against official sources and updated every 4 hours.",
 };
 
 export default function RootLayout({
@@ -12,7 +12,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
+      <body className="min-h-screen bg-stone-50 text-stone-900 antialiased">
         {children}
       </body>
     </html>
