@@ -4,12 +4,17 @@ import { ALL_DEALS, daysLeft, type Deal } from "@/lib/deals";
 import { FEED_URL } from "@/lib/feed";
 import { prepareDeals, type ResolvedDeal } from "@/lib/classify";
 
+const GEMINI_MODEL = "gemini-3.5-flash-lite";
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 const PRIMARY_MODEL = "google/gemma-4-31b-it:free";
 const FALLBACK_MODEL = "baidu/ernie-5.5-flash-preview:free";
 const SNAPSHOT_MAX_CHARS = 8000;
 const SNAPSHOT_RETRY_CHARS = 4000;
 const MAX_TOKENS = 900;
 const FETCH_TIMEOUT_MS = 9000;
+// Vercel Hobby functions stop around 10s, so the whole attempt chain
+// must fit inside this budget, with a little headroom for the reply.
+const FUNCTION_BUDGET_MS = 9500;
 
 interface IncomingMessage {
   role?: unknown;
@@ -260,14 +265,117 @@ interface CallResult {
   model: string;
 }
 
+/** Gemini needs alternating user/model turns, so merge any consecutive
+ *  same-role messages into one. The last message is always a user one. */
+function toGeminiContents(
+  messages: { role: "user" | "assistant"; content: string }[],
+): { role: "user" | "model"; parts: { text: string }[] }[] {
+  const out: { role: "user" | "model"; parts: { text: string }[] }[] = [];
+  for (const m of messages) {
+    const role = m.role === "assistant" ? "model" : "user";
+    const last = out[out.length - 1];
+    if (last && last.role === role) {
+      last.parts[0].text += `\n${m.content}`;
+    } else {
+      out.push({ role, parts: [{ text: m.content }] });
+    }
+  }
+  return out;
+}
+
+async function callGemini(
+  apiKey: string,
+  systemPrompt: string,
+  messages: { role: "user" | "assistant"; content: string }[],
+  timeoutMs: number,
+): Promise<CallResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const started = Date.now();
+  try {
+    const res = await fetch(GEMINI_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: toGeminiContents(messages),
+        generationConfig: { maxOutputTokens: MAX_TOKENS },
+      }),
+      signal: controller.signal,
+    });
+    const elapsedMs = Date.now() - started;
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      let snippet = text.slice(0, 200);
+      try {
+        const err = JSON.parse(text) as { error?: { message?: unknown } };
+        if (typeof err?.error?.message === "string") {
+          snippet = err.error.message.slice(0, 200);
+        }
+      } catch {
+        // Keep the raw snippet.
+      }
+      return {
+        ok: false,
+        status: res.status,
+        errorSnippet: snippet,
+        aborted: false,
+        elapsedMs,
+        model: GEMINI_MODEL,
+      };
+    }
+    const data: unknown = await res.json();
+    const parts =
+      data &&
+      typeof data === "object" &&
+      Array.isArray((data as { candidates?: unknown }).candidates) &&
+      (data as { candidates: { content?: { parts?: { text?: unknown }[] } }[] })
+        .candidates[0]?.content?.parts;
+    const reply = Array.isArray(parts)
+      ? parts
+          .map((p) => (typeof p?.text === "string" ? p.text : ""))
+          .join("")
+          .trim()
+      : "";
+    if (reply.length === 0) {
+      return {
+        ok: false,
+        status: res.status,
+        errorSnippet: "empty reply",
+        aborted: false,
+        elapsedMs,
+        model: GEMINI_MODEL,
+      };
+    }
+    return { ok: true, reply, status: res.status, errorSnippet: "", aborted: false, elapsedMs, model: GEMINI_MODEL };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      errorSnippet: controller.signal.aborted
+        ? "aborted (timeout)"
+        : String(err).slice(0, 200),
+      aborted: controller.signal.aborted,
+      elapsedMs: Date.now() - started,
+      model: GEMINI_MODEL,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function callOpenRouter(
   apiKey: string,
   model: string,
   systemPrompt: string,
   messages: { role: "user" | "assistant"; content: string }[],
+  timeoutMs: number,
 ): Promise<CallResult> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const started = Date.now();
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -348,8 +456,9 @@ export async function POST(req: Request) {
     );
   }
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  if (!geminiKey && !openRouterKey) {
     return NextResponse.json(
       { error: "The chatbot is not configured yet. Try again later." },
       { status: 503 },
@@ -432,46 +541,79 @@ export async function POST(req: Request) {
       { status: 502 },
     );
 
-  const first = await callOpenRouter(apiKey, PRIMARY_MODEL, buildPrompt(SNAPSHOT_MAX_CHARS), messages);
-  if (first.ok && first.reply) {
-    return NextResponse.json({ reply: first.reply });
-  }
-  console.error(
-    "[ask-scout] openrouter failed",
-    JSON.stringify({
-      model: first.model,
-      status: first.status,
-      aborted: first.aborted,
-      elapsedMs: first.elapsedMs,
-      error: first.errorSnippet,
-      question: questionLog,
-    }),
-  );
-
-  // One retry with the fallback model and a smaller snapshot, on rate
-  // limiting, a server error, a timeout, a failed fetch or an empty reply.
-  const retriable =
-    first.status === 429 ||
-    first.status >= 500 ||
-    first.status === 0 ||
-    first.aborted ||
-    first.errorSnippet === "empty reply";
-  if (retriable) {
-    const second = await callOpenRouter(apiKey, FALLBACK_MODEL, buildPrompt(SNAPSHOT_RETRY_CHARS), messages);
-    if (second.ok && second.reply) {
-      return NextResponse.json({ reply: second.reply });
-    }
+  // Attempt chain: Gemini first, then OpenRouter primary, then OpenRouter
+  // fallback. A later attempt only starts when the previous one failed
+  // fast (rate limit, server error, failed fetch or empty reply) and
+  // enough of the function time budget is left; an attempt that burned
+  // its whole timeout ends the chain instead of starting one that
+  // cannot finish.
+  const chainStarted = Date.now();
+  const logFailure = (label: string, r: CallResult) => {
     console.error(
-      "[ask-scout] openrouter retry failed",
+      `[ask-scout] ${label} failed`,
       JSON.stringify({
-        model: second.model,
-        status: second.status,
-        aborted: second.aborted,
-        elapsedMs: second.elapsedMs,
-        error: second.errorSnippet,
+        model: r.model,
+        status: r.status,
+        aborted: r.aborted,
+        elapsedMs: r.elapsedMs,
+        error: r.errorSnippet,
         question: questionLog,
       }),
     );
+  };
+  const isRetriable = (r: CallResult) =>
+    r.status === 429 ||
+    r.status >= 500 ||
+    r.status === 0 ||
+    r.aborted ||
+    r.errorSnippet === "empty reply";
+  // Time left for a new attempt, keeping headroom inside the budget.
+  const attemptTimeout = () =>
+    Math.min(FETCH_TIMEOUT_MS, FUNCTION_BUDGET_MS - (Date.now() - chainStarted) - 500);
+
+  if (geminiKey) {
+    const first = await callGemini(
+      geminiKey,
+      buildPrompt(SNAPSHOT_MAX_CHARS),
+      messages,
+      FETCH_TIMEOUT_MS,
+    );
+    if (first.ok && first.reply) {
+      return NextResponse.json({ reply: first.reply });
+    }
+    logFailure("gemini", first);
+    if (!isRetriable(first) || attemptTimeout() < 3000) {
+      return fail();
+    }
+  }
+
+  if (openRouterKey) {
+    const second = await callOpenRouter(
+      openRouterKey,
+      PRIMARY_MODEL,
+      buildPrompt(SNAPSHOT_RETRY_CHARS),
+      messages,
+      attemptTimeout(),
+    );
+    if (second.ok && second.reply) {
+      return NextResponse.json({ reply: second.reply });
+    }
+    logFailure("openrouter", second);
+    if (!isRetriable(second) || attemptTimeout() < 3000) {
+      return fail();
+    }
+
+    const third = await callOpenRouter(
+      openRouterKey,
+      FALLBACK_MODEL,
+      buildPrompt(SNAPSHOT_RETRY_CHARS),
+      messages,
+      attemptTimeout(),
+    );
+    if (third.ok && third.reply) {
+      return NextResponse.json({ reply: third.reply });
+    }
+    logFailure("openrouter retry", third);
   }
 
   return fail();
