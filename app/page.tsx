@@ -397,7 +397,7 @@ export default function Home() {
             <p className="mt-4 max-w-lg text-base leading-relaxed text-stone-600">
               Scholarships, grants, hackathons, competitions, remote jobs
               and free tools, checked against official sources and updated
-              every 4 hours.
+              every 2 hours.
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
               <a
@@ -419,7 +419,7 @@ export default function Home() {
               closing soon
             </p>
           </div>
-          <div className="hidden sm:block">
+          <div>
             <Hero3D />
           </div>
         </section>
