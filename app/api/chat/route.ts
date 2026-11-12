@@ -68,6 +68,10 @@ interface CallResult {
   aborted: boolean;
   elapsedMs: number;
   model: string;
+  // Provider finish reason, when the response carries one: Gemini
+  // "MAX_TOKENS", OpenRouter "length" mean the reply was cut by the
+  // output token cap. The gate rejects those (see isGoodModelReply).
+  finishReason?: string;
 }
 
 /** Gemini needs alternating user/model turns, so merge any consecutive
@@ -179,7 +183,7 @@ async function callGemini(
         model: GEMINI_MODEL,
       };
     }
-    return { ok: true, reply, status: res.status, errorSnippet: "", aborted: false, elapsedMs, model: GEMINI_MODEL };
+    return { ok: true, reply, status: res.status, errorSnippet: "", aborted: false, elapsedMs, model: GEMINI_MODEL, finishReason: typeof finishReason === "string" ? finishReason : undefined };
   } catch (err) {
     return {
       ok: false,
@@ -245,6 +249,14 @@ async function callOpenRouter(
       };
     }
     const data: unknown = await res.json();
+    // OpenRouter reports a token-cap cut as finish_reason "length";
+    // without this the reply would look complete to the gate.
+    const finishReason =
+      data &&
+      typeof data === "object" &&
+      Array.isArray((data as { choices?: unknown }).choices) &&
+      (data as { choices: { finish_reason?: unknown }[] }).choices[0]
+        ?.finish_reason;
     const reply =
       data &&
       typeof data === "object" &&
@@ -261,7 +273,7 @@ async function callOpenRouter(
         model,
       };
     }
-    return { ok: true, reply: reply.trim(), status: res.status, errorSnippet: "", aborted: false, elapsedMs, model };
+    return { ok: true, reply: reply.trim(), status: res.status, errorSnippet: "", aborted: false, elapsedMs, model, finishReason: typeof finishReason === "string" ? finishReason : undefined };
   } catch (err) {
     return {
       ok: false,
@@ -429,9 +441,10 @@ export async function POST(req: Request) {
   // same 8,000-char snapshot, and the first GOOD answer wins. A
   // smaller snapshot for Gemma and Ernie let Ernie win by being
   // fastest while seeing almost none of the shortlist, so first-to-
-  // answer no longer wins on its own: a reply that is too short,
-  // ends mid-sentence or names no source link is rejected and the
-  // race continues to the next finisher. Waiting serially burned the
+  // answer no longer wins on its own: a reply that is too short, was
+  // cut by the output token cap, ends inside a markdown link, ends
+  // mid-sentence or names no source link is rejected and the race
+  // continues to the next finisher. Waiting serially burned the
   // whole budget on one slow attempt (Gemini timing out at 9s while
   // OpenRouter 429ed), so nothing was left for a fallback.
   const chainStarted = Date.now();
@@ -509,7 +522,10 @@ export async function POST(req: Request) {
           // First GOOD answer wins. A reply that fails the quality
           // gate does not win; the race continues to the next
           // finisher, and the rejection is logged with the reason.
-          const gate = isGoodModelReply(r.reply);
+          // The gate sees the provider finish reason, so a reply cut
+          // by the output token cap is rejected even when its text
+          // looks complete.
+          const gate = isGoodModelReply(r.reply, r.finishReason);
           if (gate.ok) {
             raceController.abort();
             resolve(r);

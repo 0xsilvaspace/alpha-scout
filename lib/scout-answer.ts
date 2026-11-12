@@ -992,14 +992,46 @@ export function tryDeterministic(
 /* ------------------------------------------------------------------ */
 
 // First-to-answer must not win when its answer is worse: a reply
-// that is too short, ends mid-sentence, or names no source link is
+// that is too short, was cut by the output token cap, ends inside a
+// markdown link, ends mid-sentence, or names no source link is
 // rejected and the race continues to the next finisher.
-export function isGoodModelReply(reply: string): {
+
+/** A reply cut by the output token cap ends inside a markdown link:
+ *  "[Source](https://...shared-scholar" with no closing ")". Every
+ *  well-formed markdown link closes its paren, so a "](" with no ")"
+ *  after it anywhere in the reply means the reply was cut. The old
+ *  gate missed this: its bare-URL fallback (/\bhttps?:\/\/\S+\s*$/)
+ *  matches a truncated URL fragment exactly like a complete bare
+ *  URL, so a reply ending mid-link passed as "ends with a link". */
+function hasUnclosedLink(text: string): boolean {
+  let from = 0;
+  for (;;) {
+    const open = text.indexOf("](", from);
+    if (open < 0) return false;
+    if (text.indexOf(")", open + 2) < 0) return true;
+    from = open + 2;
+  }
+}
+
+/** Provider finish reasons that mean the reply was cut by the output
+ *  token cap: Gemini reports "MAX_TOKENS", OpenRouter reports
+ *  "length". A normally finished reply reports "STOP" / "stop". */
+export function isCutByTokenCap(finishReason: string | undefined): boolean {
+  return finishReason === "MAX_TOKENS" || finishReason === "length";
+}
+
+export function isGoodModelReply(reply: string, finishReason?: string): {
   ok: boolean;
   reason: string;
 } {
   const r = reply.trim();
   if (r.length < 150) return { ok: false, reason: "too short" };
+  if (isCutByTokenCap(finishReason)) {
+    return { ok: false, reason: "cut off by output token cap" };
+  }
+  if (hasUnclosedLink(r)) {
+    return { ok: false, reason: "truncated link" };
+  }
   const endsWithLink =
     /\]\(https?:\/\/[^\s)]+\)\s*$/.test(r) || /\bhttps?:\/\/\S+\s*$/.test(r);
   const last = r[r.length - 1];
