@@ -415,7 +415,7 @@ export async function POST(req: Request) {
         ]),
     "Never invent details, values or deadlines. If the list does not contain the answer, say so plainly and suggest checking the official source.",
     "Always include the official source link for any opportunity you mention.",
-    "Format every answer like this: one short opening line, then a numbered list of at most 5 opportunities with a blank line between items. Each item is four lines: the title on its own line in **bold**, one short line saying what it offers, one line with the closing date (for example 'Closes 16 November 2026 (in 3 days)'), then the official source link on its own line as [Official source](url). Never put the closing date inside the description sentence, never print a raw URL, and never use bold anywhere except the title line. Keep every answer under 250 words.",
+    "Format every answer like this: one short opening line, then a numbered list of at most 5 opportunities. Number each item (1., 2., 3., ...) and put a blank line before each number, so the items are clearly separated. Each item is four lines: the title on its own line in **bold**, one short line saying what it offers, one line with the closing date (for example 'Closes 16 November 2026 (in 3 days)'), then the official source link on its own line as [Official source](url). Never put the closing date inside the description sentence, never print a raw URL, and never use bold anywhere except the title line. Keep every answer under 250 words.",
     "Opportunities:",
   ].join("\n");
   const systemBroad = [
@@ -425,7 +425,7 @@ export async function POST(req: Request) {
     "Summarize by category using the counts. Do not list every item one by one, and do not go into detail on the example entries.",
     "Never invent details, values or deadlines. If the list does not contain the answer, say so plainly and suggest checking the official source.",
     "The example entries below have no source links, so do not invent any. Only mention a source link when it is shown in the list.",
-    "Keep every answer under 250 words. Write it as one short opening line, then a numbered list with a blank line between items; each item is the title in **bold** on its own line, one short line saying what it offers, one line with the closing date, then the official source link on its own line as [Official source](url). Never print a raw URL, and never use bold anywhere except the title line.",
+    "Keep every answer under 250 words. Write it as one short opening line, then a numbered list: number each item (1., 2., 3., ...) and put a blank line before each number, so the items are clearly separated. Each item is the title in **bold** on its own line, one short line saying what it offers, one line with the closing date, then the official source link on its own line as [Official source](url). Never print a raw URL, and never use bold anywhere except the title line.",
     "Opportunities:",
   ].join("\n");
   // Judgment questions get a slimmer snapshot (eligibility and
