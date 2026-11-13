@@ -22,8 +22,11 @@ const STOPWORDS = new Set([
 const DEADLINE_WORDS = /\b(deadline|deadlines|closing|closes|close|expir|expires|expiry|due|soon|running out|last date)\b/i;
 
 // Track words a question may use, mapped to the deal track they mean.
+// "study" is deliberately NOT a scholarship word: it appears in
+// "course of study" and "field of study", and a jobs question about a
+// course of study must not be misread as a scholarship question.
 const TRACK_WORDS: Record<string, string[]> = {
-  scholarships: ["scholarship", "scholarships", "masters", "phd", "study"],
+  scholarships: ["scholarship", "scholarships", "masters", "phd"],
   grants: ["grant", "grants", "funding", "fund"],
   hackathons: ["hackathon", "hackathons", "hack", "buildathon", "hackweek"],
   competitions: ["competition", "competitions", "contest", "contests", "challenge", "challenges", "cup", "games", "olympiad"],
@@ -329,11 +332,18 @@ function stepsProse(d: ResolvedDeal): string {
   return `To apply, ${lowered.slice(0, -1).join(", ")}, then ${lowered[lowered.length - 1]}.`;
 }
 
-/** One clean sentence per deal: title, the value that matters, the
- *  deadline, and the official source link. */
-function dealLine(d: ResolvedDeal): string {
+/** One listing as a clean list item: title on its own line, one short
+ *  line saying what it offers, the closing date on its own line at the
+ *  bottom of the item, then the official source link on its own line.
+ *  The deadline is never packed into the description sentence and a
+ *  raw URL is never printed. Pass an index for numbered lists. */
+function dealItem(d: ResolvedDeal, index?: number): string {
+  const title =
+    index === undefined
+      ? `**${clean(d.title)}**`
+      : `${index}. **${clean(d.title)}**`;
   const value = shorten(valueClause(d), 90).replace(/[.;\s]+$/, "");
-  return `- **${clean(d.title)}**: ${value}. ${closesClause(d)}. [Official source](${d.sourceUrl})`;
+  return [title, `${value}.`, `${closesClause(d)}.`, `[Official source](${d.sourceUrl})`].join("\n");
 }
 
 /** Short title for comparison sentences: drop parentheticals and any
@@ -488,7 +498,7 @@ function singleDealReply(d: ResolvedDeal): string {
   if (who) body.push(who);
   const steps = stepsProse(d);
   if (steps) body.push(steps);
-  return `${body.join(" ")}\n\nOfficial source: ${d.sourceUrl}`;
+  return `${body.join(" ")}\n\n[Official source](${d.sourceUrl})`;
 }
 
 type DealField = "deadline" | "value" | "requirements" | "steps";
@@ -506,16 +516,16 @@ function fieldReply(d: ResolvedDeal, field: DealField): string {
   const title = `**${clean(d.title)}**`;
   switch (field) {
     case "deadline":
-      return `${title}\n\n${deadlineSentence(d)} ${valueSentence(d)}\n\nOfficial source: ${d.sourceUrl}`;
+      return `${title}\n\n${deadlineSentence(d)} ${valueSentence(d)}\n\n[Official source](${d.sourceUrl})`;
     case "value":
-      return `${title}\n\n${valueSentence(d)} ${deadlineSentence(d)}\n\nOfficial source: ${d.sourceUrl}`;
+      return `${title}\n\n${valueSentence(d)} ${deadlineSentence(d)}\n\n[Official source](${d.sourceUrl})`;
     case "requirements": {
       const who = whoSentence(d);
-      return `${title}\n\n${who ? `${who} ` : ""}${deadlineSentence(d)}\n\nOfficial source: ${d.sourceUrl}`;
+      return `${title}\n\n${who ? `${who} ` : ""}${deadlineSentence(d)}\n\n[Official source](${d.sourceUrl})`;
     }
     case "steps": {
       const steps = stepsProse(d);
-      return `${title}\n\n${steps ? `${steps} ` : ""}${deadlineSentence(d)}\n\nOfficial source: ${d.sourceUrl}`;
+      return `${title}\n\n${steps ? `${steps} ` : ""}${deadlineSentence(d)}\n\n[Official source](${d.sourceUrl})`;
     }
   }
 }
@@ -530,7 +540,8 @@ function comparisonReply(named: ScoredDeal[]): string {
   for (const s of named) {
     const d = s.d;
     lines.push(`**${clean(d.title)}**`);
-    lines.push(`${valueSentence(d)} ${deadlineSentence(d)}`);
+    lines.push(valueSentence(d));
+    lines.push(deadlineSentence(d));
     const a = audienceClause(d);
     if (a) {
       lines.push(/^open in\b/i.test(a) ? `It is ${a}.` : `It is for ${a}.`);
@@ -542,8 +553,10 @@ function comparisonReply(named: ScoredDeal[]): string {
 }
 
 /** Questions that need judgment or a recommendation go to the model,
- *  never to the deterministic layer. */
-const JUDGMENT_RE = /\b(should i|recommend|suggest|best for me|right for me|good for me|which (one )?should|what should i|fits? (a|an|me|my)|suited? (for|to)|help me (choose|pick|decide))\b/i;
+ *  never to the deterministic layer. Fit phrasing counts too: "jobs
+ *  well aligned with my course of study" is a judgment about which
+ *  jobs fit the field, not a request for the closest keyword match. */
+const JUDGMENT_RE = /\b(should i|recommend|suggest|best for me|right for me|good for me|which (one )?should|what should i|fits? (a|an|me|my)|suited? (for|to)|help me (choose|pick|decide)|aligned? (with|to)|match(es)? (my|me)|relevant to (my|me)|for my (course|degree|field|background|study))\b/i;
 
 const ABOUT_RE = /^\s*(tell me about|what is|what's|whats|details of|tell me more about)\b/i;
 
@@ -565,14 +578,23 @@ function extractSubject(question: string): string {
   return s.trim();
 }
 
-function absentReply(subject: string, closest: ScoredDeal[]): string {
-  const lines = [`I could not find a ${subject} on the site.`];
-  if (closest.length > 0) {
-    lines.push("The closest matches are:");
-    for (const s of closest) lines.push(dealLine(s.d));
+function absentReply(
+  subject: string,
+  closest: ScoredDeal[],
+  track?: DisplayTrack | null,
+): string {
+  const lines = [`I could not find ${subject} on the site.`];
+  // The closest matches are drawn from the kind the user asked about
+  // only: a jobs question must never be answered with scholarships.
+  const inTrack = track
+    ? closest.filter((s) => s.d.track === track)
+    : closest;
+  if (inTrack.length > 0) {
+    lines.push("", "The closest matches are:", "");
+    for (const s of inTrack) lines.push(dealItem(s.d), "");
   }
   lines.push("Check the site for the full list of opportunities.");
-  return lines.join("\n");
+  return lines.join("\n").trimEnd();
 }
 
 const MONTHS = [
@@ -696,6 +718,13 @@ function detectTrack(tokens: string[]): DisplayTrack | null {
   return best;
 }
 
+/** The kind of opportunity a question asks about, if it names one.
+ *  Exported so the route can restrict judgment guarantees to the
+ *  asked kind. */
+export function detectQuestionTrack(question: string): DisplayTrack | null {
+  return detectTrack(tokenize(question));
+}
+
 const VALUE_RE = /\b(biggest|largest|highest|most valuable|best.?paid|highest.?paying|top prizes?|richest|most money)\b/i;
 
 /** "1 opportunity" / "3 opportunities". */
@@ -721,11 +750,14 @@ function countLabel(track: DisplayTrack | null, n: number): string {
   return n === 1 ? `1 ${singularLabel(base)}` : `${n} ${base}`;
 }
 
-/** Header plus up to 5 deal lines. */
+/** Header plus up to 5 numbered deal items, with a blank line between
+ *  items so each one reads as its own entry. */
 function listReply(header: string, items: ResolvedDeal[]): string {
-  const lines = [header];
-  for (const d of items.slice(0, 5)) lines.push(dealLine(d));
-  return lines.join("\n");
+  const lines = [header, ""];
+  items.slice(0, 5).forEach((d, i) => {
+    lines.push(dealItem(d, i + 1), "");
+  });
+  return lines.join("\n").trimEnd();
 }
 
 /** Broad question: counts plus one example per track, with its link. */
@@ -764,9 +796,10 @@ function countingReply(
   const examples = [...subset].sort(bySoonest).slice(0, 3);
   const lines = [
     `There ${isAre(subset.length)} ${countLabel(track, subset.length)}${window ? ` closing ${window.label}` : closingSoon ? " closing soon" : ""} on the site.`,
+    "",
   ];
-  for (const d of examples) lines.push(dealLine(d));
-  return { type: "count", reply: lines.join("\n") };
+  for (const d of examples) lines.push(dealItem(d), "");
+  return { type: "count", reply: lines.join("\n").trimEnd() };
 }
 
 interface DeterministicAnswer {
@@ -829,7 +862,10 @@ export function tryDeterministic(
     });
     if (specific.length > 0) {
       const closest = scored.filter((s) => s.score > 0).slice(0, 2);
-      return { type: "deal-absent", reply: absentReply(subject, closest) };
+      return {
+        type: "deal-absent",
+        reply: absentReply(subject, closest, detectTrack(tokens)),
+      };
     }
   }
 
@@ -875,7 +911,7 @@ export function tryDeterministic(
       return {
         type: "filter-cost",
         reply: listReply(
-          `${oppCount(subset.length)} ${isAre(subset.length)} ${cost.label}${track ? ` in ${TRACK_LABELS[track] ?? track}` : ""}, here ${subset.length === 1 ? "it is" : "are 5"} (soonest closing first):`,
+          `${oppCount(subset.length)} ${isAre(subset.length)} ${cost.label}${track ? ` in ${TRACK_LABELS[track] ?? track}` : ""}, soonest closing first:`,
           [...subset].sort(bySoonest),
         ),
       };
@@ -931,7 +967,7 @@ export function tryDeterministic(
     }
     return {
       type: "filter-deadline",
-      reply: `No ${label} are closing in the next 14 days. The soonest-expiring ${label} are:\n${soonest.map(dealLine).join("\n")}`,
+      reply: `No ${label} are closing in the next 14 days. The soonest-expiring ${label} are:\n\n${soonest.map((d) => dealItem(d)).join("\n\n")}`,
     };
   }
 
@@ -960,7 +996,7 @@ export function tryDeterministic(
       return {
         type: "filter-track",
         reply: listReply(
-          `${countLabel(track, inTrack.length)} in total${inTrack.length === 1 ? "" : ", here are 5"}:`,
+          `${countLabel(track, inTrack.length)} in total, soonest closing first:`,
           inTrack,
         ),
       };
@@ -970,9 +1006,15 @@ export function tryDeterministic(
   // 12. General rule: keywords match a deal with confidence. This runs
   // before the broad check: a one-keyword question such as "Is the
   // Zecathon listed?" matches a single deal and is not a broad question,
-  // even though fewer than 5 deals match its keywords.
+  // even though fewer than 5 deals match its keywords. When the
+  // question names a kind of opportunity, only that kind is matched:
+  // a jobs question is never answered with scholarships.
   if (top && top.score >= 2 && top.hits >= 1) {
-    const matched = scored.filter((s) => s.score > 0).slice(0, 5);
+    const track = detectTrack(tokens);
+    let matched = scored.filter((s) => s.score > 0);
+    if (track) matched = matched.filter((s) => s.d.track === track);
+    matched = matched.slice(0, 5);
+    if (matched.length === 0) return null;
     return {
       type: "filter-keywords",
       reply: listReply("Here are the closest matches:", matched.map((s) => s.d)),
@@ -1207,10 +1249,17 @@ export function rankJudgmentShortlist(
   // risk note), so the expired filter alone cannot catch it.
   const active = activeDeals(deals);
   const graduateQuestion = /\bgraduates?\b/i.test(question);
-  const shortlistable = graduateQuestion
+  let shortlistable = graduateQuestion
     ? active.filter((d) => !isUndergraduateOnly(d))
     : active;
   const tokens = tokenize(question);
+  // A question that names a kind of opportunity (jobs, scholarships,
+  // grants...) is judged only within that kind: a jobs question must
+  // never be answered with scholarships, however strong they are.
+  const askedTrack = detectTrack(tokens);
+  if (askedTrack) {
+    shortlistable = shortlistable.filter((d) => d.track === askedTrack);
+  }
   const expanded = new Set<string>(tokens);
   for (const t of tokens) {
     const extra = FIELD_EXPANSIONS[t];
@@ -1374,7 +1423,7 @@ export function buildBroadSnapshot(deals: ResolvedDeal[]): string {
 }
 
 /** Counts of the full list, by track, for the counts summary. */
-const TRACK_LABELS: Record<string, string> = {
+export const TRACK_LABELS: Record<string, string> = {
   scholarships: "scholarships",
   grants: "grants",
   hackathons: "hackathons",
@@ -1556,15 +1605,10 @@ export function appendMissingOpenScholarships(
     .sort(bySoonest)
     .slice(0, 3);
   if (missing.length === 0) return unchanged;
-  const lines = ["Also open to you as a graduate:"];
-  for (const d of missing) {
-    const value = shorten(valueClause(d), 90).replace(/[.;\s]+$/, "");
-    lines.push(
-      `- **${shortTitle(d)}**: ${value}. ${closesClause(d)}. [Source](${d.sourceUrl})`,
-    );
-  }
+  const lines = ["Also open to you as a graduate:", ""];
+  for (const d of missing) lines.push(dealItem(d), "");
   return {
-    reply: `${reply.trimEnd()}\n\n${clean(lines.join("\n"))}`,
+    reply: `${reply.trimEnd()}\n\n${clean(lines.join("\n").trimEnd())}`,
     appended: missing.length,
   };
 }
@@ -1658,16 +1702,10 @@ export function appendMissingFieldRoles(
     .slice(0, 3)
     .filter((d) => !dealNamedInReply(reply, d));
   if (missing.length === 0) return unchanged;
-  const lines = ["Also a strong fit for your field:"];
-  for (const d of missing) {
-    const value = shorten(valueClause(d), 90).replace(/[.;\s]+$/, "");
-    const closes = d.expiresOn ? ` ${closesClause(d)}.` : "";
-    lines.push(
-      `- **${shortTitle(d)}**: ${value}.${closes} [Source](${d.sourceUrl})`,
-    );
-  }
+  const lines = ["Also a strong fit for your field:", ""];
+  for (const d of missing) lines.push(dealItem(d), "");
   return {
-    reply: `${reply.trimEnd()}\n\n${clean(lines.join("\n"))}`,
+    reply: `${reply.trimEnd()}\n\n${clean(lines.join("\n").trimEnd())}`,
     appended: missing.length,
   };
 }

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { MessageCircle, Send, X } from "lucide-react";
+import { renderChatMarkdown } from "@/lib/chat-markdown";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -116,7 +117,9 @@ export default function Chatbot({ signedIn }: { signedIn: boolean }) {
                         : "mr-8 rounded-lg bg-stone-100 px-3 py-2 text-sm leading-relaxed text-stone-800"
                     }
                   >
-                    {m.content}
+                    {m.role === "assistant"
+                      ? renderChatMarkdown(m.content)
+                      : m.content}
                   </div>
                 ))}
                 {busy ? (

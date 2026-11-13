@@ -10,6 +10,7 @@ import {
   buildJudgmentSnapshot,
   buildSnapshot,
   countsSummary,
+  detectQuestionTrack,
   fieldSectionDeals,
   isBroadQuestion,
   isGoodModelReply,
@@ -19,6 +20,7 @@ import {
   rankDeals,
   rankJudgmentShortlist,
   todayLine,
+  TRACK_LABELS,
   tryDeterministic,
 } from "@/lib/scout-answer";
 
@@ -380,6 +382,10 @@ export async function POST(req: Request) {
   // one-example-per-track snapshot: the model can only judge what it
   // is shown.
   const judgment = isJudgmentQuestion(question);
+  // The kind of opportunity the user asked about, if they named one:
+  // the shortlist, the instruction and the guarantees all stay inside
+  // it, so a jobs question is never answered with scholarships.
+  const askedTrack = detectQuestionTrack(question);
   const ranked = judgment
     ? rankJudgmentShortlist(deals, question)
     : broad
@@ -398,14 +404,18 @@ export async function POST(req: Request) {
     ...(judgment
       ? [
           "The shortlist below is split into two sections: 'Field-specific fits' and 'Open to all disciplines, any graduate can apply'. Judge only what is shown. Do not claim a listing is absent or a field is uncovered when it is not in the shortlist; if the shortlist does not cover the question, say so and suggest checking the site.",
-          JUDGMENT_OPEN_FIELD_INSTRUCTION,
+          ...(askedTrack === null || askedTrack === "scholarships"
+            ? [JUDGMENT_OPEN_FIELD_INSTRUCTION]
+            : [
+                `The user asked about ${TRACK_LABELS[askedTrack] ?? askedTrack} only. Recommend only ${TRACK_LABELS[askedTrack] ?? askedTrack} from the shortlist. Do not name scholarships, grants or any other kind of opportunity, even if they are strong fits in general.`,
+              ]),
         ]
       : [
           "The ranked sample below is drawn from the same list the counts describe, and earlier answers in this conversation came from that same list, so do not retract or second-guess them when the sample shows only part of the list.",
         ]),
     "Never invent details, values or deadlines. If the list does not contain the answer, say so plainly and suggest checking the official source.",
     "Always include the official source link for any opportunity you mention.",
-    "Keep every answer under 250 words. List at most 5 opportunities, one short line each, with the official source link. No long paragraphs.",
+    "Format every answer like this: one short opening line, then a numbered list of at most 5 opportunities with a blank line between items. Each item is four lines: the title on its own line in **bold**, one short line saying what it offers, one line with the closing date (for example 'Closes 16 November 2026 (in 3 days)'), then the official source link on its own line as [Official source](url). Never put the closing date inside the description sentence, never print a raw URL, and never use bold anywhere except the title line. Keep every answer under 250 words.",
     "Opportunities:",
   ].join("\n");
   const systemBroad = [
@@ -415,7 +425,7 @@ export async function POST(req: Request) {
     "Summarize by category using the counts. Do not list every item one by one, and do not go into detail on the example entries.",
     "Never invent details, values or deadlines. If the list does not contain the answer, say so plainly and suggest checking the official source.",
     "The example entries below have no source links, so do not invent any. Only mention a source link when it is shown in the list.",
-    "Keep every answer under 250 words. List at most 5 opportunities, one short line each, with the official source link. No long paragraphs.",
+    "Keep every answer under 250 words. Write it as one short opening line, then a numbered list with a blank line between items; each item is the title in **bold** on its own line, one short line saying what it offers, one line with the closing date, then the official source link on its own line as [Official source](url). Never print a raw URL, and never use bold anywhere except the title line.",
     "Opportunities:",
   ].join("\n");
   // Judgment questions get a slimmer snapshot (eligibility and
@@ -559,11 +569,17 @@ export async function POST(req: Request) {
     if (judgment) {
       // Deterministic guarantee: the strongest any-discipline
       // scholarships are appended when the model fails to name them,
-      // so they can never be dropped by the model's choice.
-      const augmented = appendMissingOpenScholarships(
-        winner.reply,
-        openSectionDeals(ranked),
-      );
+      // so they can never be dropped by the model's choice. It only
+      // runs when the user did not ask for a different kind: for a
+      // jobs question it would append scholarships the user never
+      // asked about.
+      const augmented =
+        askedTrack === null || askedTrack === "scholarships"
+          ? appendMissingOpenScholarships(
+              winner.reply,
+              openSectionDeals(ranked),
+            )
+          : { reply: winner.reply, appended: 0 };
       // Same guarantee for field-specific roles: the model dropped
       // the strongest physics fit in run 14 (Atomistic Materials
       // Modeling Expert) while naming a generic STEM role instead.
