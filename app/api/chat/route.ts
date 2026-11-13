@@ -24,11 +24,20 @@ import {
   tryDeterministic,
   tryShowMore,
 } from "@/lib/scout-answer";
+import {
+  availableProviders,
+  CEREBRAS_MODEL,
+  CEREBRAS_URL,
+  OPENAI_MODEL,
+  OPENAI_URL,
+  openRouterFallbackOrder,
+  pickOpenRouterModel,
+  type OpenRouterFreeModel,
+  type ProviderName,
+} from "@/lib/model-racers";
 
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-const PRIMARY_MODEL = "google/gemma-4-31b-it:free";
-const FALLBACK_MODEL = "baidu/ernie-5.5-flash-preview:free";
 const SNAPSHOT_MAX_CHARS = 8000;
 const MAX_TOKENS_BROAD = 400;
 const MAX_TOKENS_DETAIL = 1500;
@@ -71,6 +80,7 @@ interface CallResult {
   aborted: boolean;
   elapsedMs: number;
   model: string;
+  provider: ProviderName;
   // Provider finish reason, when the response carries one: Gemini
   // "MAX_TOKENS", OpenRouter "length" mean the reply was cut by the
   // output token cap. The gate rejects those (see isGoodModelReply).
@@ -97,6 +107,7 @@ function toGeminiContents(
 
 async function callGemini(
   apiKey: string,
+  fallbackApiKey: string | undefined,
   systemPrompt: string,
   messages: { role: "user" | "assistant"; content: string }[],
   timeoutMs: number,
@@ -116,77 +127,103 @@ async function callGemini(
     else raceSignal.addEventListener("abort", () => controller.abort(), { once: true });
   }
   const started = Date.now();
+  // A second Gemini key only helps when it comes from a different
+  // Google Cloud project (quotas are per project, not per key), so
+  // it is tried only when the first key is rate-limited.
+  const keys =
+    fallbackApiKey && fallbackApiKey !== apiKey ? [apiKey, fallbackApiKey] : [apiKey];
   try {
-    const res = await fetch(GEMINI_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: toGeminiContents(messages),
-        generationConfig: { maxOutputTokens: maxTokens },
-      }),
-      signal: controller.signal,
-    });
-    const elapsedMs = Date.now() - started;
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      let snippet = text.slice(0, 200);
-      try {
-        const err = JSON.parse(text) as { error?: { message?: unknown } };
-        if (typeof err?.error?.message === "string") {
-          snippet = err.error.message.slice(0, 200);
+    for (let ki = 0; ki < keys.length; ki++) {
+      const res = await fetch(GEMINI_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": keys[ki],
+        },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: toGeminiContents(messages),
+          generationConfig: { maxOutputTokens: maxTokens },
+        }),
+        signal: controller.signal,
+      });
+      const elapsedMs = Date.now() - started;
+      if (!res.ok) {
+        if (res.status === 429 && ki + 1 < keys.length) {
+          console.warn(
+            "[ask-scout] gemini key rate-limited, trying second key",
+            JSON.stringify({ status: res.status }),
+          );
+          continue;
         }
-      } catch {
-        // Keep the raw snippet.
+        const text = await res.text().catch(() => "");
+        let snippet = text.slice(0, 200);
+        try {
+          const err = JSON.parse(text) as { error?: { message?: unknown } };
+          if (typeof err?.error?.message === "string") {
+            snippet = err.error.message.slice(0, 200);
+          }
+        } catch {
+          // Keep the raw snippet.
+        }
+        return {
+          ok: false,
+          status: res.status,
+          errorSnippet: snippet,
+          aborted: false,
+          elapsedMs,
+          model: GEMINI_MODEL,
+          provider: "gemini",
+        };
       }
-      return {
-        ok: false,
-        status: res.status,
-        errorSnippet: snippet,
-        aborted: false,
-        elapsedMs,
-        model: GEMINI_MODEL,
-      };
+      const data: unknown = await res.json();
+      const finishReason =
+        data &&
+        typeof data === "object" &&
+        Array.isArray((data as { candidates?: unknown }).candidates) &&
+        (data as { candidates: { finishReason?: unknown }[] }).candidates[0]
+          ?.finishReason;
+      if (finishReason === "MAX_TOKENS") {
+        console.warn(
+          "[ask-scout] gemini reply cut off by output token cap",
+          JSON.stringify({ model: GEMINI_MODEL, maxTokens }),
+        );
+      }
+      const parts =
+        data &&
+        typeof data === "object" &&
+        Array.isArray((data as { candidates?: unknown }).candidates) &&
+        (data as { candidates: { content?: { parts?: { text?: unknown }[] } }[] })
+          .candidates[0]?.content?.parts;
+      const reply = Array.isArray(parts)
+        ? parts
+            .map((p) => (typeof p?.text === "string" ? p.text : ""))
+            .join("")
+            .trim()
+        : "";
+      if (reply.length === 0) {
+        return {
+          ok: false,
+          status: res.status,
+          errorSnippet: "empty reply",
+          aborted: false,
+          elapsedMs,
+          model: GEMINI_MODEL,
+          provider: "gemini",
+        };
+      }
+      return { ok: true, reply, status: res.status, errorSnippet: "", aborted: false, elapsedMs, model: GEMINI_MODEL, provider: "gemini", finishReason: typeof finishReason === "string" ? finishReason : undefined };
     }
-    const data: unknown = await res.json();
-    const finishReason =
-      data &&
-      typeof data === "object" &&
-      Array.isArray((data as { candidates?: unknown }).candidates) &&
-      (data as { candidates: { finishReason?: unknown }[] }).candidates[0]
-        ?.finishReason;
-    if (finishReason === "MAX_TOKENS") {
-      console.warn(
-        "[ask-scout] gemini reply cut off by output token cap",
-        JSON.stringify({ model: GEMINI_MODEL, maxTokens }),
-      );
-    }
-    const parts =
-      data &&
-      typeof data === "object" &&
-      Array.isArray((data as { candidates?: unknown }).candidates) &&
-      (data as { candidates: { content?: { parts?: { text?: unknown }[] } }[] })
-        .candidates[0]?.content?.parts;
-    const reply = Array.isArray(parts)
-      ? parts
-          .map((p) => (typeof p?.text === "string" ? p.text : ""))
-          .join("")
-          .trim()
-      : "";
-    if (reply.length === 0) {
-      return {
-        ok: false,
-        status: res.status,
-        errorSnippet: "empty reply",
-        aborted: false,
-        elapsedMs,
-        model: GEMINI_MODEL,
-      };
-    }
-    return { ok: true, reply, status: res.status, errorSnippet: "", aborted: false, elapsedMs, model: GEMINI_MODEL, finishReason: typeof finishReason === "string" ? finishReason : undefined };
+    // Unreachable: keys always has at least one entry.
+    return {
+      ok: false,
+      status: 0,
+      errorSnippet: "no gemini key tried",
+      aborted: false,
+      elapsedMs: Date.now() - started,
+      model: GEMINI_MODEL,
+      provider: "gemini",
+    };
   } catch (err) {
     return {
       ok: false,
@@ -199,13 +236,18 @@ async function callGemini(
       aborted: controller.signal.aborted,
       elapsedMs: Date.now() - started,
       model: GEMINI_MODEL,
+      provider: "gemini",
     };
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function callOpenRouter(
+/** One call to any OpenAI-compatible chat API (OpenRouter, Cerebras,
+ *  OpenAI): same request shape, different base URL, key and model. */
+async function callChatCompletions(
+  provider: ProviderName,
+  baseUrl: string,
   apiKey: string,
   model: string,
   systemPrompt: string,
@@ -226,7 +268,7 @@ async function callOpenRouter(
   }
   const started = Date.now();
   try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const res = await fetch(baseUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -249,10 +291,11 @@ async function callOpenRouter(
         aborted: false,
         elapsedMs,
         model,
+        provider,
       };
     }
     const data: unknown = await res.json();
-    // OpenRouter reports a token-cap cut as finish_reason "length";
+    // These APIs report a token-cap cut as finish_reason "length";
     // without this the reply would look complete to the gate.
     const finishReason =
       data &&
@@ -274,9 +317,10 @@ async function callOpenRouter(
         aborted: false,
         elapsedMs,
         model,
+        provider,
       };
     }
-    return { ok: true, reply: reply.trim(), status: res.status, errorSnippet: "", aborted: false, elapsedMs, model, finishReason: typeof finishReason === "string" ? finishReason : undefined };
+    return { ok: true, reply: reply.trim(), status: res.status, errorSnippet: "", aborted: false, elapsedMs, model, provider, finishReason: typeof finishReason === "string" ? finishReason : undefined };
   } catch (err) {
     return {
       ok: false,
@@ -289,10 +333,60 @@ async function callOpenRouter(
       aborted: controller.signal.aborted,
       elapsedMs: Date.now() - started,
       model,
+      provider,
     };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The OpenRouter racer: one picked free model per question, with one
+ *  sequential fallback to the next model in the rotation when the pick
+ *  fails (a retired free model 404s, a 429, a timeout). The fallback
+ *  only fires on failure, so a normal question costs one OpenRouter
+ *  request, not two, which is what doubled the daily budget. */
+async function callOpenRouterWithFallback(
+  apiKey: string,
+  firstModel: OpenRouterFreeModel,
+  systemPrompt: string,
+  messages: { role: "user" | "assistant"; content: string }[],
+  timeoutMs: number,
+  maxTokens: number,
+  raceSignal?: AbortSignal,
+): Promise<CallResult> {
+  const started = Date.now();
+  const models = [firstModel, ...openRouterFallbackOrder(firstModel)].slice(0, 2);
+  let last: CallResult | undefined;
+  for (const model of models) {
+    const remaining = timeoutMs - (Date.now() - started);
+    if (remaining <= 500) break;
+    const r = await callChatCompletions(
+      "openrouter",
+      "https://openrouter.ai/api/v1/chat/completions",
+      apiKey,
+      model,
+      systemPrompt,
+      messages,
+      remaining,
+      maxTokens,
+      raceSignal,
+    );
+    if (r.ok) return r;
+    last = r;
+    // A lost race aborts the attempt; there is nothing to fall back to.
+    if (raceSignal?.aborted) return r;
+  }
+  return (
+    last ?? {
+      ok: false,
+      status: 0,
+      errorSnippet: "no openrouter model tried",
+      aborted: false,
+      elapsedMs: Date.now() - started,
+      model: firstModel,
+      provider: "openrouter",
+    }
+  );
 }
 
 export async function POST(req: Request) {
@@ -397,10 +491,16 @@ export async function POST(req: Request) {
   }
 
   // Only the model path needs API keys; the deterministic path above
-  // already answered without them.
-  const geminiKey = process.env.GEMINI_API_KEY;
-  const openRouterKey = process.env.OPENROUTER_API_KEY;
-  if (!geminiKey && !openRouterKey) {
+  // already answered without them. Providers join the race only when
+  // their key is set in Vercel (see lib/model-racers).
+  const providers = availableProviders({
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    GEMINI_API_KEY_2: process.env.GEMINI_API_KEY_2,
+    OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+    CEREBRAS_API_KEY: process.env.CEREBRAS_API_KEY,
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  });
+  if (providers.length === 0) {
     return NextResponse.json(
       { error: "The chatbot is not configured yet. Try again later." },
       { status: 503 },
@@ -477,16 +577,16 @@ export async function POST(req: Request) {
       { status: 502 },
     );
 
-  // Race: all three providers start at the same time, each with the
-  // same 8,000-char snapshot, and the first GOOD answer wins. A
-  // smaller snapshot for Gemma and Ernie let Ernie win by being
-  // fastest while seeing almost none of the shortlist, so first-to-
-  // answer no longer wins on its own: a reply that is too short, was
-  // cut by the output token cap, ends inside a markdown link, ends
-  // mid-sentence or names no source link is rejected and the race
-  // continues to the next finisher. Waiting serially burned the
-  // whole budget on one slow attempt (Gemini timing out at 9s while
-  // OpenRouter 429ed), so nothing was left for a fallback.
+  // Race: every configured provider starts at the same time, each
+  // with the same 8,000-char snapshot, and the first GOOD answer
+  // wins. A smaller snapshot for Gemma and Ernie let Ernie win by
+  // being fastest while seeing almost none of the shortlist, so
+  // first-to-answer no longer wins on its own: a reply that is too
+  // short, was cut by the output token cap, ends inside a markdown
+  // link, ends mid-sentence or names no source link is rejected and
+  // the race continues to the next finisher. Waiting serially burned
+  // the whole budget on one slow attempt (Gemini timing out at 9s
+  // while OpenRouter 429ed), so nothing was left for a fallback.
   const chainStarted = Date.now();
   // Broad answers are short (counts plus one line per category), so a
   // small token cap keeps them fast enough to finish inside the timeout.
@@ -514,10 +614,11 @@ export async function POST(req: Request) {
   const raceController = new AbortController();
   const raceTimeoutMs = attemptTimeout();
   const racers: Promise<CallResult>[] = [];
-  if (geminiKey) {
+  if (providers.includes("gemini")) {
     racers.push(
       callGemini(
-        geminiKey,
+        process.env.GEMINI_API_KEY as string,
+        process.env.GEMINI_API_KEY_2,
         buildPrompt(SNAPSHOT_MAX_CHARS),
         messages,
         raceTimeoutMs,
@@ -526,11 +627,11 @@ export async function POST(req: Request) {
       ),
     );
   }
-  if (openRouterKey) {
+  if (providers.includes("openrouter")) {
     racers.push(
-      callOpenRouter(
-        openRouterKey,
-        PRIMARY_MODEL,
+      callOpenRouterWithFallback(
+        process.env.OPENROUTER_API_KEY as string,
+        pickOpenRouterModel(question),
         buildPrompt(SNAPSHOT_MAX_CHARS),
         messages,
         raceTimeoutMs,
@@ -538,10 +639,29 @@ export async function POST(req: Request) {
         raceController.signal,
       ),
     );
+  }
+  if (providers.includes("cerebras")) {
     racers.push(
-      callOpenRouter(
-        openRouterKey,
-        FALLBACK_MODEL,
+      callChatCompletions(
+        "cerebras",
+        CEREBRAS_URL,
+        process.env.CEREBRAS_API_KEY as string,
+        CEREBRAS_MODEL,
+        buildPrompt(SNAPSHOT_MAX_CHARS),
+        messages,
+        raceTimeoutMs,
+        maxTokens,
+        raceController.signal,
+      ),
+    );
+  }
+  if (providers.includes("openai")) {
+    racers.push(
+      callChatCompletions(
+        "openai",
+        OPENAI_URL,
+        process.env.OPENAI_API_KEY as string,
+        OPENAI_MODEL,
         buildPrompt(SNAPSHOT_MAX_CHARS),
         messages,
         raceTimeoutMs,
@@ -634,7 +754,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ reply: finalReply });
   }
   for (const r of settled) {
-    logFailure(r.model === GEMINI_MODEL ? "gemini" : "openrouter", r);
+    logFailure(r.provider, r);
   }
 
   return fail();
