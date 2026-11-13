@@ -2,7 +2,7 @@
  * ALPHA SCOUT — seed data.
  *
  * The 259 deals below are copied verbatim from the ALPHA SCOUT Muse Space
- * (getstate, 2026-11-13T16:48:10.596Z — 4-hour feed sync): same ids, titles, tracks, estimated values,
+ * (getstate, 2026-11-13T17:59:25.390Z — 4-hour feed sync): same ids, titles, tracks, estimated values,
  * valueUsd, eligibility, costType, expiry dates, source URLs, requirements,
  * action steps, verification status and risk notes. No deal was invented,
  * and no value, date or link was changed.
