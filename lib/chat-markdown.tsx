@@ -49,7 +49,7 @@ export function renderChatMarkdown(text: string): ReactNode[] {
     // Bulleted list block: every line starts with "- ".
     if (lines.every((l) => l.startsWith("- "))) {
       out.push(
-        <ul key={key++} className="my-1 list-disc space-y-1 pl-5">
+        <ul key={key++} className="my-2 list-disc space-y-2 pl-5">
           {lines.map((l, i) => (
             <li key={i} className="leading-relaxed">
               {renderInline(l.slice(2), `u${key}-${i}`)}
@@ -92,8 +92,13 @@ export function renderChatMarkdown(text: string): ReactNode[] {
         itemIndex += 1;
         first = `${itemIndex}. ${first}`;
       }
+      // An item gets a full blank line above and below it (my-5,
+      // about one line height after margin collapse), not the small
+      // my-2 gap that read as ordinary line spacing. The opening
+      // line and plain prose keep my-2.
+      const item = isItem(g);
       out.push(
-        <p key={key++} className="my-2 leading-relaxed">
+        <p key={key++} className={item ? "my-5 leading-relaxed" : "my-2 leading-relaxed"}>
           {[first, ...g.slice(1)].map((l, i) => (
             <span key={i}>
               {i > 0 ? <br /> : null}
