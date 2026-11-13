@@ -24,6 +24,16 @@
  * parentheticals, years, amounts and filler words). Within a group the
  * single best entry is kept: verified first, then most complete, then
  * latest expiry, then newest.
+ *
+ * One hard rule: two deals with different brand alias keys are different
+ * opportunities and never merge, even when they share a title key or a
+ * source URL. That is what separates same-programme listings at different
+ * institutions (Mastercard Foundation at ASU vs Edinburgh share the title
+ * key "foundation mastercard" because the em dash cuts the institution
+ * name, but their alias keys mc-asu and mc-edinburgh differ). The rule is
+ * enforced twice: a union between conflicting-alias deals is skipped, and
+ * any group that still ends up holding conflicting aliases (merged through
+ * a deal with no alias) is split by alias before the best entry is picked.
  */
 
 import { daysLeft, type Deal, type Track } from "./deals";
@@ -378,9 +388,13 @@ function bestOf(group: Deal[]): Deal {
 /**
  * Collapse duplicate opportunities: one entry per group. Union-find over
  * the grouping keys, so a deal matching a group by URL and another by
- * title still lands in the same group.
+ * title still lands in the same group. Two deals with different brand
+ * alias keys never merge, even on a shared title or URL key, and any group
+ * that still holds conflicting aliases (merged through a deal with no
+ * alias) is split by alias before the best entry is picked.
  */
 export function dedupeDeals(deals: Deal[]): Deal[] {
+  const aliases = deals.map((d) => aliasKey(d.title));
   const parent = new Map<number, number>();
   const find = (i: number): number => {
     const p = parent.get(i) ?? i;
@@ -392,6 +406,10 @@ export function dedupeDeals(deals: Deal[]): Deal[] {
     return p;
   };
   const union = (a: number, b: number) => {
+    // Conflicting aliases are different opportunities: never merge them.
+    const aa = aliases[a];
+    const ab = aliases[b];
+    if (aa && ab && aa !== ab) return;
     const ra = find(a);
     const rb = find(b);
     if (ra !== rb) parent.set(ra, rb);
@@ -415,7 +433,44 @@ export function dedupeDeals(deals: Deal[]): Deal[] {
     groups.set(root, group);
   });
 
-  return [...groups.values()].map(bestOf).sort((a, b) => a.id - b.id);
+  // Split any group that still holds conflicting aliases (merged through
+  // a deal with no alias): one sub-group per alias, and a deal with no
+  // alias joins the sub-group it shares a source URL with, else the
+  // largest sub-group (ties broken by alias name, for determinism).
+  const splitGroups: Deal[][] = [];
+  for (const group of groups.values()) {
+    const distinct = [...new Set(group.map((d) => aliasKey(d.title)).filter((a): a is string => a !== null))];
+    if (distinct.length <= 1) {
+      splitGroups.push(group);
+      continue;
+    }
+    const byAlias = new Map<string, Deal[]>();
+    const noAlias: Deal[] = [];
+    for (const deal of group) {
+      const a = aliasKey(deal.title);
+      if (a === null) noAlias.push(deal);
+      else {
+        const sub = byAlias.get(a) ?? [];
+        sub.push(deal);
+        byAlias.set(a, sub);
+      }
+    }
+    for (const deal of noAlias) {
+      const url = normalizeUrl(deal.sourceUrl);
+      const urlMatch = [...byAlias.entries()].filter(([, sub]) =>
+        sub.some((d) => normalizeUrl(d.sourceUrl) === url),
+      );
+      const target =
+        urlMatch.length === 1
+          ? urlMatch[0][0]
+          : [...byAlias.entries()]
+              .sort((x, y) => y[1].length - x[1].length || (x[0] < y[0] ? -1 : 1))[0][0];
+      byAlias.get(target)!.push(deal);
+    }
+    splitGroups.push(...byAlias.values());
+  }
+
+  return splitGroups.map(bestOf).sort((a, b) => a.id - b.id);
 }
 
 /** Full load path: dedupe first, then re-classify each kept deal. */

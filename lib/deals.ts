@@ -1,8 +1,8 @@
 /**
  * ALPHA SCOUT — seed data.
  *
- * The 203 deals below are copied verbatim from the ALPHA SCOUT Muse Space
- * (getstate, 2026-11-13T04:01:35.441Z — 4-hour feed sync): same ids, titles, tracks, estimated values,
+ * The 204 deals below are copied verbatim from the ALPHA SCOUT Muse Space
+ * (getstate, 2026-11-13T04:27:06.364Z — 4-hour feed sync): same ids, titles, tracks, estimated values,
  * valueUsd, eligibility, costType, expiry dates, source URLs, requirements,
  * action steps, verification status and risk notes. No deal was invented,
  * and no value, date or link was changed.
@@ -155,6 +155,22 @@ export const DEALS: Deal[] = [
     actionSteps: "1. Open the DAAD database page and confirm your country and programme eligibility in the portal. 2. Prepare motivation letter, CV, English test proof and recommendation. 3. Submit in the DAAD portal before 24:00 CET on 16 November 2026.",
     verification: "verified",
     riskNote: "Deadline is 3 days away; confirm Nigeria is listed for your chosen programme in the DAAD portal before submitting.",
+    status: "active",
+  },
+  {
+    id: 23,
+    title: "Mastercard Foundation Scholars Program — ASU Innovation & Technology Scholarship 2027 (Kigali)",
+    track: "scholarships",
+    estimatedValue: "Full tuition + books/fees + housing + transport + medical + visa costs",
+    valueUsd: 30000,
+    eligibility: "Citizens of African countries incl. Nigeria, aged 18–33 by the deadline; bachelor's degree by July 2027 with min 3.0/4.0 GPA; scholars must live in Kigali, Rwanda for the programme.",
+    costType: "truly-free",
+    expiresOn: "2026-11-22",
+    sourceUrl: "https://opportunitylab.net/fully-funded-scholarships-africans-open-now-2027/",
+    requirements: "African citizenship; bachelor's degree by July 2027 (3.0 GPA); age 18–33; willingness to relocate to Kigali for the full programme; 50 graduate places on selected ASU Online master's degrees.",
+    actionSteps: "1. Check the official ASU/Mastercard programme page for the eligible degree list. 2. Prepare CV, transcripts and proof of citizenship. 3. Submit the online application (or downloadable PDF form by email) before 23:59 GMT, 22 Nov 2026. 4. Late applications are not considered.",
+    verification: "verified",
+    riskNote: "Source is a scholarship roundup, not the official ASU/Mastercard page — verify the 22 Nov 2026 deadline and degree list on the official page before applying.",
     status: "active",
   },
   {
