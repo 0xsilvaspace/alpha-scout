@@ -558,6 +558,109 @@ function comparisonReply(named: ScoredDeal[]): string {
  *  jobs fit the field, not a request for the closest keyword match. */
 const JUDGMENT_RE = /\b(should i|recommend|suggest|best for me|right for me|good for me|which (one )?should|what should i|fits? (a|an|me|my)|suited? (for|to)|help me (choose|pick|decide)|aligned? (with|to)|match(es)? (my|me)|relevant to (my|me)|for my (course|degree|field|background|study))\b/i;
 
+/** A leading correction from a spoken follow-up ("No. I meant ...",
+ *  "No, I mean ..."): the "No" corrects the previous answer, it is
+ *  not part of the question. Strip it before intent detection so a
+ *  voice correction is read exactly like the typed question. The
+ *  transcript itself is unchanged; only detection sees the stripped
+ *  form, so voice and typed input take the same path. */
+function stripCorrectionPrefix(question: string): string {
+  return question
+    .replace(
+      /^\s*(no[,.]?\s+)?(i meant|i mean|what i meant|what i mean|i was asking (about|for))\b\s*/i,
+      "",
+    )
+    .trim();
+}
+
+/** Fields of study a question can name, in question order. The first
+ *  match wins; a question naming two fields is rare, and the
+ *  shortlist ranks on the named one. */
+const FIELD_ALIASES: [RegExp, string][] = [
+  [/computer science|computing/i, "computer science"],
+  [/data science/i, "data science"],
+  [/physics/i, "physics"],
+  [/chemistry/i, "chemistry"],
+  [/biochemistry/i, "biochemistry"],
+  [/biology|biological/i, "biology"],
+  [/mathematics|\bmaths?\b/i, "mathematics"],
+  [/mechanical engineering|electrical engineering|civil engineering/i, "engineering"],
+  [/engineering/i, "engineering"],
+  [/medicine|medical/i, "medicine"],
+  [/nursing/i, "nursing"],
+  [/pharmacy/i, "pharmacy"],
+  [/law|legal/i, "law"],
+  [/business/i, "business"],
+  [/economics/i, "economics"],
+  [/finance|accounting/i, "finance"],
+  [/software|programming|coding/i, "software"],
+  [/psychology/i, "psychology"],
+  [/agriculture|agronomy/i, "agriculture"],
+  [/architecture/i, "architecture"],
+  [/journalism|media/i, "media"],
+  [/design/i, "design"],
+  [/\bart\b/i, "art"],
+  [/geology/i, "geology"],
+  [/astronomy/i, "astronomy"],
+  [/statistics/i, "statistics"],
+  [/linguistics/i, "linguistics"],
+  [/history/i, "history"],
+  [/philosophy/i, "philosophy"],
+  [/marketing/i, "marketing"],
+  [/tourism|hospitality/i, "tourism"],
+];
+
+/** The field a question names, if it names one. Exported so the
+ *  route can build the fit shortlist and the fit prompt around it. */
+export function detectFieldOfStudy(question: string): string | null {
+  const text = stripCorrectionPrefix(question);
+  for (const [re, field] of FIELD_ALIASES) {
+    if (re.test(text)) return field;
+  }
+  return null;
+}
+
+export type ApplicantLevel = "student" | "graduate" | "both";
+
+/** Whether the asker is a current student, a graduate, or both
+ *  ("a physics student ... or a physics graduate"). */
+export function detectApplicantLevel(question: string): ApplicantLevel | null {
+  const q = stripCorrectionPrefix(question).toLowerCase();
+  const student = /\b(student|students|undergraduate|undergraduates|undergrad)\b/.test(q);
+  const graduate = /\b(graduate|graduates|graduated)\b/.test(q);
+  if (student && graduate) return "both";
+  if (student) return "student";
+  if (graduate) return "graduate";
+  return null;
+}
+
+const APPLICANT_RE =
+  /\b(student|students|undergraduate|undergraduates|undergrad|graduate|graduates|graduated|postgraduate|postgraduates|masters|msc|phd)\b/i;
+const APPLY_LANG_RE =
+  /\b(apply|applies|applying|application|eligible|eligibility|qualify|qualifies|qualifying|fit|fits|fitting|suited|suitable)\b/i;
+const FOR_APPLICANT_RE =
+  /\bfor\s+(a\s+|an\s+|the\s+)?[a-z]+(?:\s+[a-z]+){0,1}\s+(student|students|graduate|graduates|undergraduate|undergraduates)\b/i;
+
+/** A fit question: "jobs that a physics student can apply for",
+ *  "scholarships for a chemistry graduate", "what grants can a law
+ *  student apply for". It names a field of study (or "my field")
+ *  AND an applicant (student / graduate) AND apply / eligibility /
+ *  fit language, or the "for a <field> student/graduate"
+ *  construction. These must never be answered with the whole track:
+ *  the old code read only the track word ("jobs") and returned all
+ *  48 jobs, soonest first, with the field ignored entirely. */
+export function isFitQuestion(question: string): boolean {
+  const text = stripCorrectionPrefix(question);
+  const field = detectFieldOfStudy(text);
+  const myField = /\bmy\s+(field|course|degree|background|study|major)\b/i.test(text);
+  if (!field && !myField) return false;
+  if (!APPLICANT_RE.test(text)) return false;
+  if (APPLY_LANG_RE.test(text)) return true;
+  if (FOR_APPLICANT_RE.test(text)) return true;
+  if (/\bcan\s+(i|a|an|we|you)\b/i.test(text)) return true;
+  return false;
+}
+
 const ABOUT_RE = /^\s*(tell me about|what is|what's|whats|details of|tell me more about)\b/i;
 
 /** Generic category words: a subject made only of these is not a named
@@ -868,17 +971,37 @@ function broadReply(deals: ResolvedDeal[]): string {
   return lines.join("\n");
 }
 
+
+/** Field matches for a plain list or count ("physics jobs", "how
+ *  many physics jobs"): direct or adjacent fits, without senior
+ *  roles and umbrella boards, which are not jobs a student or
+ *  graduate can apply for as listed. */
+function fieldListFits(d: ResolvedDeal, field: string): boolean {
+  const t = fitTier(d, field);
+  if (t !== 1 && t !== 2) return false;
+  if (requiresSeniorExperience(d)) return false;
+  if (isUmbrellaDeal(d)) return false;
+  return true;
+}
+
 function countingReply(
   active: ResolvedDeal[],
   question: string,
   tokens: string[],
 ): DeterministicAnswer | null {
   const track = detectTrack(tokens);
+  const field = detectFieldOfStudy(question);
   const window = detectWindow(question);
   const closingSoon = DEADLINE_WORDS.test(question);
   let subset = active;
   if (track) {
     subset = subset.filter((d) => d.track === track);
+  }
+  // "How many physics jobs are there" counts physics jobs, not all
+  // 48 jobs: a named field filters the count to direct and adjacent
+  // fits, the same tiers the fit shortlist uses.
+  if (field) {
+    subset = subset.filter((d) => fieldListFits(d, field));
   }
   if (window) {
     subset = subset.filter(window.predicate);
@@ -890,7 +1013,7 @@ function countingReply(
   }
   const examples = [...subset].sort(bySoonest).slice(0, 3);
   const lines = [
-    `There ${isAre(subset.length)} ${countLabel(track, subset.length)}${window ? ` closing ${window.label}` : closingSoon ? " closing soon" : ""} on the site.`,
+    `There ${isAre(subset.length)} ${countLabel(track, subset.length)}${field ? ` for ${field}` : ""}${window ? ` closing ${window.label}` : closingSoon ? " closing soon" : ""} on the site.`,
     "",
   ];
   for (const d of examples) lines.push(dealItem(d), "");
@@ -911,7 +1034,11 @@ export function tryDeterministic(
   deals: ResolvedDeal[],
   question: string,
 ): DeterministicAnswer | null {
-  if (JUDGMENT_RE.test(question)) return null;
+  // Fit questions ("jobs a physics student can apply for") go to
+  // the model with the strict fit shortlist, never to the
+  // deterministic layer: the deterministic track list below would
+  // answer them with every deal in the track.
+  if (isJudgmentQuestion(question)) return null;
   const active = activeDeals(deals);
   if (active.length === 0) return null;
   const tokens = tokenize(question);
@@ -974,8 +1101,12 @@ export function tryDeterministic(
   const window = detectWindow(question);
   if (window) {
     const track = detectTrack(tokens);
+    const field = detectFieldOfStudy(question);
     let subset = active.filter(window.predicate);
     if (track) subset = subset.filter((d) => d.track === track);
+    if (field) {
+      subset = subset.filter((d) => fieldListFits(d, field));
+    }
     if (subset.length > 0) {
       const n = requestedCount(question);
       const label = countLabel(track, subset.length);
@@ -983,17 +1114,17 @@ export function tryDeterministic(
         type: "filter-window",
         reply: listReply(
           n
-            ? `Here are the top ${n} ${pluralLabel(track)} closing ${window.label}:`
-            : `${label} close${subset.length === 1 ? "s" : ""} ${window.label}:`,
+            ? `Here are the top ${n} ${pluralLabel(track)}${field ? ` for ${field}` : ""} closing ${window.label}:`
+            : `${label}${field ? ` for ${field}` : ""} close${subset.length === 1 ? "s" : ""} ${window.label}:`,
           [...subset].sort(bySoonest),
           n ?? 5,
         ),
       };
     }
-    if (track) {
+    if (track || field) {
       return {
         type: "filter-window",
-        reply: `No ${TRACK_LABELS[track] ?? track} close ${window.label}.`,
+        reply: `No ${track ? TRACK_LABELS[track] ?? track : "opportunities"}${field ? ` for ${field}` : ""} close ${window.label}.`,
       };
     }
   }
@@ -1004,8 +1135,12 @@ export function tryDeterministic(
     // "card" is the cost cue itself, so it must not also count as the
     // banking track: "which deals need no card" is about every track.
     const track = detectTrack(tokens.filter((t) => t !== "card"));
+    const field = detectFieldOfStudy(question);
     let subset = active.filter((d) => d.costType === cost.cost);
     if (track) subset = subset.filter((d) => d.track === track);
+    if (field) {
+      subset = subset.filter((d) => fieldListFits(d, field));
+    }
     if (subset.length > 0) {
       const n = requestedCount(question);
       return {
@@ -1025,8 +1160,15 @@ export function tryDeterministic(
   const eligWords = detectEligibility(question);
   if (eligWords) {
     const track = detectTrack(tokens);
+    const field = detectFieldOfStudy(question);
     let subset = active;
     if (track) subset = subset.filter((d) => d.track === track);
+    // When a field is named, it must match: "jobs for physics
+    // students" must not fall back to any deal matching just
+    // "students". The field filter runs before the any-word fallback.
+    if (field) {
+      subset = subset.filter((d) => fieldListFits(d, field));
+    }
     const allMatch = subset.filter((d) =>
       eligWords.every((w) => eligibilityMatches(d.eligibility, w)),
     );
@@ -1052,7 +1194,12 @@ export function tryDeterministic(
   // 9. Deals closing in the next 14 days.
   if (DEADLINE_WORDS.test(question)) {
     const track = detectTrack(tokens);
-    let closing = active.filter(isClosingSoon);
+    const field = detectFieldOfStudy(question);
+    const fieldFits = (d: ResolvedDeal): boolean => {
+      if (!field) return true;
+      return fieldListFits(d, field);
+    };
+    let closing = active.filter(isClosingSoon).filter(fieldFits);
     if (track) closing = closing.filter((d) => d.track === track);
     closing.sort(bySoonest);
     if (closing.length > 0) {
@@ -1063,7 +1210,7 @@ export function tryDeterministic(
       return {
         type: "filter-deadline",
         reply: listReply(
-          n ? `Here are the top ${n} ${pluralLabel(track)} closing soon:` : `${label}:`,
+          n ? `Here are the top ${n} ${pluralLabel(track)}${field ? ` for ${field}` : ""} closing soon:` : `${label}${field ? ` for ${field}` : ""}:`,
           closing,
           n ?? 5,
         ),
@@ -1072,27 +1219,36 @@ export function tryDeterministic(
     const label = track ? `${TRACK_LABELS[track] ?? track}` : "opportunities";
     const soonest = [...active]
       .filter((d) => (track ? d.track === track : true))
+      .filter(fieldFits)
       .sort(bySoonest)
       .slice(0, requestedCount(question) ?? 3);
     if (soonest.length === 0) {
       return {
         type: "filter-deadline",
-        reply: `No ${label} are listed on the site right now.`,
+        reply: `No ${label}${field ? ` for ${field}` : ""} are listed on the site right now.`,
       };
     }
     return {
       type: "filter-deadline",
-      reply: `No ${label} are closing in the next 14 days. The soonest-expiring ${label} are:\n\n${soonest.map((d) => dealItem(d)).join("\n\n")}`,
+      reply: `No ${label}${field ? ` for ${field}` : ""} are closing in the next 14 days. The soonest-expiring ${label}${field ? ` for ${field}` : ""} are:\n\n${soonest.map((d) => dealItem(d)).join("\n\n")}`,
     };
   }
 
   // 10. Biggest prizes / highest paying.
   if (VALUE_RE.test(question)) {
     const track = detectTrack(tokens);
+    const field = detectFieldOfStudy(question);
     let valued = active.filter((d) => d.valueUsd !== null);
     if (track) {
       const inTrack = valued.filter((d) => d.track === track);
       if (inTrack.length > 0) valued = inTrack;
+    }
+    // A named field filters here too: the biggest physics prize is
+    // not the biggest prize on the site. When nothing for the field
+    // has a value, fall through to the field-guarded track list,
+    // which answers that plainly instead of listing other fields.
+    if (field) {
+      valued = valued.filter((d) => fieldListFits(d, field));
     }
     valued.sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0) || bySoonest(a, b));
     if (valued.length > 0) {
@@ -1112,10 +1268,35 @@ export function tryDeterministic(
     }
   }
 
-  // 11. One track, top 5 by soonest expiry.
+  // 11. One track, top 5 by soonest expiry. When the question names
+  // a field, this is a field list, not the track list: "physics
+  // jobs" lists only the jobs that mention physics (direct or
+  // adjacent fits), with the filtered count, and says plainly when
+  // there are none, instead of returning all 48 jobs.
   const track = detectTrack(tokens);
   if (track) {
+    const field = detectFieldOfStudy(question);
     const inTrack = active.filter((d) => d.track === track).sort(bySoonest);
+    if (field) {
+      const fitted = inTrack.filter((d) => fieldListFits(d, field));
+      if (fitted.length > 0) {
+        const n = requestedCount(question);
+        return {
+          type: "filter-track-field",
+          reply: listReply(
+            n
+              ? `Here are the top ${n} ${pluralLabel(track)} for ${field}:`
+              : `${countLabel(track, fitted.length)} mention ${field}, soonest closing first:`,
+            fitted,
+            n ?? 5,
+          ),
+        };
+      }
+      return {
+        type: "filter-track-field-absent",
+        reply: `No ${pluralLabel(track)} on the site are specifically for ${field}. Check the ${TRACK_LABELS[track] ?? track} tab on the site for the full list.`,
+      };
+    }
     if (inTrack.length > 0) {
       const n = requestedCount(question);
       return {
@@ -1139,8 +1320,12 @@ export function tryDeterministic(
   // a jobs question is never answered with scholarships.
   if (top && top.score >= 2 && top.hits >= 1) {
     const track = detectTrack(tokens);
+    const field = detectFieldOfStudy(question);
     let matched = scored.filter((s) => s.score > 0);
     if (track) matched = matched.filter((s) => s.d.track === track);
+    if (field) {
+      matched = matched.filter((s) => fieldListFits(s.d, field));
+    }
     matched = matched.slice(0, requestedCount(question) ?? 5);
     if (matched.length === 0) return null;
     return {
@@ -1190,12 +1375,21 @@ export function isCutByTokenCap(finishReason: string | undefined): boolean {
   return finishReason === "MAX_TOKENS" || finishReason === "length";
 }
 
-export function isGoodModelReply(reply: string, finishReason?: string): {
+export function isGoodModelReply(
+  reply: string,
+  finishReason?: string,
+  opts?: { minLength?: number; requireLink?: boolean },
+): {
   ok: boolean;
   reason: string;
 } {
   const r = reply.trim();
-  if (r.length < 150) return { ok: false, reason: "too short" };
+  // A fit question with no fitting opportunity is answered in plain
+  // prose with no source link to give, so the caller may relax the
+  // gate for it; every other answer still needs a link.
+  const minLength = opts?.minLength ?? 150;
+  const requireLink = opts?.requireLink ?? true;
+  if (r.length < minLength) return { ok: false, reason: "too short" };
   if (isCutByTokenCap(finishReason)) {
     return { ok: false, reason: "cut off by output token cap" };
   }
@@ -1208,7 +1402,7 @@ export function isGoodModelReply(reply: string, finishReason?: string): {
   if (!endsWithLink && last !== "." && last !== "!" && last !== "?") {
     return { ok: false, reason: "ends mid-sentence" };
   }
-  if (!r.includes("http")) return { ok: false, reason: "no source link" };
+  if (requireLink && !r.includes("http")) return { ok: false, reason: "no source link" };
   return { ok: true, reason: "" };
 }
 
@@ -1224,7 +1418,7 @@ export function isGoodModelReply(reply: string, finishReason?: string): {
 // and the question's own keyword matches.
 
 export function isJudgmentQuestion(question: string): boolean {
-  return JUDGMENT_RE.test(question);
+  return JUDGMENT_RE.test(question) || isFitQuestion(question);
 }
 
 /** Extra instruction for judgment questions, used in the route's system
@@ -1434,6 +1628,325 @@ export function rankJudgmentShortlist(
     }
   }
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Strict fit ranking for fit questions                              */
+/* ------------------------------------------------------------------ */
+
+// A fit question ("jobs that a physics student can apply for") is
+// answered only with listings that are genuinely for that field.
+// The old judgment shortlist ranked by expanded keywords and padded
+// with open-to-all listings, so a physics question came back with a
+// Principal Engineer / Professor role and a Project Lead role that
+// never name physics and need senior experience. The tiers below are
+// strict on purpose: a listing is a fit only when its own text says
+// so, and the answer names the tier, so the user can see why each
+// item is there.
+
+export type FitTier = 1 | 2 | 3;
+
+/** Words that make a listing directly about a field: the field
+ *  itself, or its direct synonyms. */
+const FIT_FIELD_WORDS: Record<string, string[]> = {
+  physics: ["physics"],
+  chemistry: ["chemistry"],
+  biochemistry: ["biochemistry", "chemistry"],
+  biology: ["biology", "biochemistry"],
+  mathematics: ["mathematics", "maths", "math"],
+  "computer science": ["computer science", "software", "programming", "coding", "developer", "computer"],
+  "data science": ["data science", "data", "machine learning", "ai"],
+  engineering: ["engineering"],
+  medicine: ["medicine", "medical"],
+  nursing: ["nursing"],
+  pharmacy: ["pharmacy"],
+  law: ["law", "legal"],
+  business: ["business"],
+  economics: ["economics"],
+  finance: ["finance", "accounting"],
+  software: ["software", "programming", "coding", "developer", "computer"],
+  psychology: ["psychology"],
+  agriculture: ["agriculture", "agronomy"],
+  architecture: ["architecture"],
+  media: ["media", "journalism"],
+  design: ["design"],
+  art: ["art", "creative"],
+  geology: ["geology"],
+  astronomy: ["astronomy"],
+  statistics: ["statistics"],
+  linguistics: ["linguistics"],
+  history: ["history"],
+  philosophy: ["philosophy"],
+  marketing: ["marketing"],
+  tourism: ["tourism", "hospitality"],
+};
+
+function fitTierWords(field: string): string[] {
+  return FIT_FIELD_WORDS[field] ?? [field];
+}
+
+/** Whether a word or phrase appears as a whole word in text. */
+function hasWord(text: string, word: string): boolean {
+  const lower = text.toLowerCase();
+  if (word.includes(" ")) return lower.includes(word);
+  const words = new Set(lower.match(/[a-z0-9]+/g) ?? []);
+  if (words.has(word)) return true;
+  if (words.has(`${word}s`)) return true;
+  if (word.endsWith("s") && words.has(word.slice(0, -1))) return true;
+  return false;
+}
+
+function dealText(d: ResolvedDeal): string {
+  return `${d.title} ${d.eligibility} ${d.requirements}`;
+}
+
+/** Strict fit tier of a listing for a field, or null when it is not
+ *  a fit at all:
+ *  1 = directly for the field: the field is named in the title,
+ *      eligibility or requirements (a physics-titled role, or a STEM
+ *      role whose requirements list physics as an eligible field).
+ *  2 = field-adjacent: a neighbouring field is named in the title
+ *      or requirements (materials science, STEM, science,
+ *      engineering for physics), so the field qualifies through it.
+ *  3 = open to any field: the listing names no field at all, or
+ *      says it is open to all disciplines. Only a fit for
+ *      scholarships and grants, where openness is the eligibility;
+ *      never a fit for a job, where the requirements decide, not the
+ *      absence of a field.
+ *  A generic umbrella role that never names the field is null,
+ *  however high the pay: it is not a fit. */
+export function fitTier(d: ResolvedDeal, field: string): FitTier | null {
+  const text = dealText(d);
+  const tier1Words = fitTierWords(field);
+  if (tier1Words.some((w) => hasWord(text, w))) return 1;
+  const expansion = FIELD_EXPANSIONS[field] ?? [];
+  const tier2Words = expansion.filter((w) => !tier1Words.includes(w));
+  // Tier 2 needs the neighbouring field in the TITLE: the role is
+  // about that neighbour (a STEM annotator, a materials modeller).
+  // A neighbour word buried in the requirements as a skill ("Python
+  // ML engineering experience") is not a fit, and a title naming a
+  // different specific discipline ("Python ML Engineer", "Software
+  // Engineering fellowship", "SWE Bench Engineer (C++)") is that
+  // discipline's role, not a neighbour fit for this field.
+  if (OTHER_DISCIPLINE_RE.test(d.title)) {
+    if (isOpenField(d) || isFieldOpen(d)) return 3;
+    return null;
+  }
+  if (tier2Words.some((w) => hasWord(d.title, w))) return 2;
+  // A neighbour word in the requirements counts only when it denotes
+  // a field of study ("STEM", "science", "materials", "chemistry"):
+  // "engineering" is left out here because it also appears as a
+  // skill ("ML engineering experience", "engineering skills"), which
+  // is not a fit. This is what keeps the SI Scholarship (STEM
+  // master's in its requirements) in while keeping the Python ML
+  // Engineer role out.
+  const categoryWords = tier2Words.filter((w) => w !== "engineering");
+  if (categoryWords.some((w) => hasWord(d.requirements, w))) return 2;
+  if (isOpenField(d) || isFieldOpen(d)) return 3;
+  return null;
+}
+
+/** Titles that name a different specific discipline: such a role
+ *  belongs to that discipline, even when its requirements mention a
+ *  neighbouring field as a skill. */
+const OTHER_DISCIPLINE_RE =
+  /\b(software|programming|coding|python|java|javascript|c\+\+|data science|machine learning|artificial intelligence|cybersecurity|cloud|devops)\b/i;
+
+/** Whether the listing's requirements demand an MSc or PhD (as a
+ *  student or a graduate): "MSc or PhD", "currently pursuing or
+ *  completed an MSc or PhD", "PhD or unusually strong MSc". */
+export function requiresMscOrPhd(d: ResolvedDeal): boolean {
+  const req = d.requirements.toLowerCase();
+  return (
+    /msc or phd|phd or/i.test(req) ||
+    /currently pursuing or completed an (msc|phd)/i.test(req) ||
+    /requires?\s+(a\s+)?(phd|msc)\b/i.test(req)
+  );
+}
+
+/** Whether the listing demands senior experience a student or a
+ *  fresh graduate cannot have: a Principal / Professor title, or
+ *  5+ years of experience. */
+function requiresSeniorExperience(d: ResolvedDeal): boolean {
+  const text = `${d.title} ${d.requirements}`;
+  if (/\b(principal|professor)\b/i.test(text)) return true;
+  return /\b([5-9]|10)\+?\s*years?\b/i.test(text) && /\bexperience\b/i.test(text);
+}
+
+/** Whether the listing demands at least a Bachelor's degree. */
+function requiresBachelors(d: ResolvedDeal): boolean {
+  return /bachelor'?s degree or higher|bachelor'?s degree/i.test(d.requirements);
+}
+
+/** The level bar of a listing, in plain words for the snapshot, so
+ *  the model can split a "student or graduate" answer correctly
+ *  instead of presenting an MSc/PhD role as open to any student. */
+export function fitLevel(d: ResolvedDeal): string {
+  if (requiresMscOrPhd(d)) return "MSc/PhD student or graduate";
+  if (isUndergraduateOnly(d)) return "current undergraduate student";
+  if (requiresBachelors(d)) return "Bachelor's degree or higher";
+  return "no degree level stated";
+}
+
+/** An umbrella / board listing ("439 Open Roles", "Jobs Board",
+ *  "Expert Contracts"): it aggregates many roles, so no single role
+ *  in it can be verified as a fit for the field. Specific roles
+ *  come first; umbrellas are only used when nothing specific fits. */
+function isUmbrellaDeal(d: ResolvedDeal): boolean {
+  return /\broles\b|\bcontracts\b|\bopportunities\b|jobs board/i.test(d.title);
+}
+
+export interface FitShortlist {
+  field: string;
+  level: ApplicantLevel | null;
+  /** Tier 1 then tier 2 (and tier 3 for scholarships/grants), best first. */
+  all: ResolvedDeal[];
+  /** General pools/boards that also take the field. They are the
+   *  answer only when no specific role fits (see rankFitShortlist). */
+  pools: ResolvedDeal[];
+  /** Fits a current student can take now (no MSc/PhD requirement). */
+  student: ResolvedDeal[];
+  /** Fits a graduate can take (undergraduate-only listings excluded). */
+  graduate: ResolvedDeal[];
+}
+
+/** Strict shortlist for a fit question: only listings whose own text
+ *  makes them a fit for the named field, in the asked kind only,
+ *  senior roles excluded, umbrellas only as a fallback. Tier 3
+ *  (open to any field) counts only for scholarships and grants. */
+export function rankFitShortlist(
+  deals: ResolvedDeal[],
+  question: string,
+): FitShortlist {
+  const field = detectFieldOfStudy(question) ?? "";
+  const level = detectApplicantLevel(question);
+  const active = activeDeals(deals);
+  const askedTrack = detectTrack(tokenize(question));
+  let pool = active;
+  if (askedTrack) pool = pool.filter((d) => d.track === askedTrack);
+  const seniorOk = /\b(senior|experienced)\b/i.test(question);
+  const tiered: { d: ResolvedDeal; tier: FitTier }[] = [];
+  for (const d of pool) {
+    if (isUndergraduateOnly(d) && level === "graduate") continue;
+    if (!seniorOk && requiresSeniorExperience(d)) continue;
+    const tier = fitTier(d, field);
+    if (tier === null) continue;
+    // Tier 3 (open to any field) is a real fit only where openness
+    // is the eligibility: scholarships and grants. For jobs the
+    // requirements decide, so an open-to-anyone job is not a
+    // physics job and is left out rather than listed as one.
+    if (tier === 3 && d.track !== "scholarships" && d.track !== "grants") continue;
+    tiered.push({ d, tier });
+  }
+  tiered.sort((a, b) => a.tier - b.tier || bySoonest(a.d, b.d));
+  const specific = tiered.filter((t) => !isUmbrellaDeal(t.d));
+  const pools = tiered.filter((t) => isUmbrellaDeal(t.d)).map((t) => t.d);
+  // Specific roles are the answer. Umbrella pools are only the
+  // answer when nothing specific fits (a law graduate has no
+  // law-specific role listed, only expert pools that also take law);
+  // then they are labelled as pools, not as specific roles.
+  const all = (specific.length > 0 ? specific : tiered).map((t) => t.d);
+  return {
+    field,
+    level,
+    all,
+    pools,
+    student: all.filter((d) => !requiresMscOrPhd(d)),
+    graduate: all.filter((d) => !isUndergraduateOnly(d)),
+  };
+}
+
+/** Counts line for the fit prompt: the filtered counts, never the
+ *  site totals. A "48 jobs" total here would invite the model to
+ *  answer the wrong question. */
+export function fitCountsLine(s: FitShortlist): string {
+  // When only general pools fit, say so outright: calling them
+  // "directly for <field>" would overstate them.
+  const poolsOnly =
+    s.all.length > 0 && s.all.every((d) => isUmbrellaDeal(d));
+  if (poolsOnly) {
+    return `No specific role for ${s.field} is listed. General expert pools that also take ${s.field}: ${s.all.length}. A current student can take: ${s.student.length}. A graduate can take: ${s.graduate.length}.`;
+  }
+  const t1 = s.all.filter((d) => fitTier(d, s.field) === 1).length;
+  const t2 = s.all.filter((d) => fitTier(d, s.field) === 2).length;
+  const t3 = s.all.filter((d) => fitTier(d, s.field) === 3).length;
+  const parts = [
+    `Directly for ${s.field}: ${t1}`,
+    `${s.field}-adjacent: ${t2}`,
+  ];
+  if (t3 > 0) parts.push(`Open to all disciplines: ${t3}`);
+  parts.push(`A current student can take: ${s.student.length}`);
+  parts.push(`A graduate can take: ${s.graduate.length}`);
+  return `${parts.join(". ")}.`;
+}
+
+function compactFitDeal(d: ResolvedDeal, field: string) {
+  const tier = fitTier(d, field);
+  return {
+    title: d.title,
+    track: d.track,
+    fit:
+      tier === 1
+        ? `directly for ${field}`
+        : tier === 2
+          ? `${field}-adjacent`
+          : "open to all disciplines",
+    level: fitLevel(d),
+    value: d.estimatedValue,
+    eligibility: shorten(d.eligibility, 120),
+    expiresOn: d.expiresOn,
+    sourceUrl: d.sourceUrl,
+    requirements: shorten(d.requirements, 200),
+  };
+}
+
+/** Fit snapshot: the shortlist split into labelled tiers so the
+ *  model sees why each deal is there, with the direct fits first
+ *  and the budget shared across tiers instead of one tier starving
+ *  the others. */
+export function buildFitSnapshot(
+  shortlist: FitShortlist,
+  maxChars: number,
+): string {
+  const field = shortlist.field;
+  // Only general pools fit: one labelled section, so the model
+  // presents them as pools, not as specific roles.
+  if (
+    shortlist.all.length > 0 &&
+    shortlist.all.every((d) => isUmbrellaDeal(d))
+  ) {
+    return (
+      `General expert pools that also take ${field}:\n` +
+      buildSnapshotFrom(shortlist.all, maxChars, (d) => ({
+        ...compactFitDeal(d, field),
+        fit: `general pool that also takes ${field}`,
+      }))
+    );
+  }
+  const groups: [string, ResolvedDeal[]][] = [];
+  const direct = shortlist.all.filter((d) => fitTier(d, field) === 1);
+  if (direct.length > 0) groups.push([`Directly for ${field}:`, direct]);
+  const adjacent = shortlist.all.filter((d) => fitTier(d, field) === 2);
+  if (adjacent.length > 0) {
+    groups.push([`${field}-adjacent, ${field} qualifies:`, adjacent]);
+  }
+  const open = shortlist.all.filter((d) => fitTier(d, field) === 3);
+  if (open.length > 0) groups.push(["Open to all disciplines:", open]);
+  if (groups.length === 0) return "[]";
+  const weights = [3, 2, 1];
+  const totalWeight = groups.reduce((sum, _, i) => sum + weights[i], 0);
+  const sections: string[] = [];
+  let used = 0;
+  groups.forEach(([header, deals], i) => {
+    const budget =
+      i === groups.length - 1
+        ? Math.max(0, maxChars - used)
+        : Math.floor((maxChars * weights[i]) / totalWeight);
+    const text = buildSnapshotFrom(deals, budget, (d) => compactFitDeal(d, field));
+    used += text.length;
+    sections.push(`${header}\n${text}`);
+  });
+  return sections.join("\n");
 }
 
 /** Deals ordered for this question: deadline deals first when the user
@@ -1728,9 +2241,12 @@ export function tryShowMore(
   if (askedTrack && prevTrack && askedTrack !== prevTrack) return null;
 
   const active = activeDeals(deals);
-  const candidates = isJudgmentQuestion(prevQuestion)
-    ? rankJudgmentShortlist(active, prevQuestion)
-    : rankDeals(active, prevQuestion);
+  const candidates =
+    isFitQuestion(prevQuestion) && detectFieldOfStudy(prevQuestion)
+      ? rankFitShortlist(active, prevQuestion).all
+      : isJudgmentQuestion(prevQuestion)
+        ? rankJudgmentShortlist(active, prevQuestion)
+        : rankDeals(active, prevQuestion);
   const inScope = askedTrack
     ? candidates.filter((d) => d.track === askedTrack)
     : candidates;
@@ -1922,6 +2438,37 @@ export function appendMissingFieldRoles(
   if (missing.length === 0) return unchanged;
   const lines = ["Also a strong fit for your field:", ""];
   for (const d of missing) lines.push(dealItem(d), "");
+  return {
+    reply: `${reply.trimEnd()}\n\n${clean(lines.join("\n").trimEnd())}`,
+    appended: missing.length,
+  };
+}
+
+/** Fit-question guarantee: append the directly-fitting (tier 1)
+ *  deals the model reply failed to name, at most 3. Tier 2 and
+ *  tier 3 deals are never appended: the old field guarantee appended
+ *  the top 3 of the field section whatever they were, which is how
+ *  generic STEM umbrella roles got padded onto specific answers.
+ *  A missed direct fit is a real omission; a missing adjacent fit
+ *  is not. Returns the reply unchanged when none are missing or
+ *  when the reply is a refusal. */
+export function appendMissingDirectFits(
+  reply: string,
+  directDeals: ResolvedDeal[],
+  field: string,
+): { reply: string; appended: number } {
+  const unchanged = { reply, appended: 0 };
+  if (
+    /could not answer|couldn't answer|cannot (help|answer)|unable to answer/i.test(
+      reply,
+    )
+  ) {
+    return unchanged;
+  }
+  const missing = directDeals.filter((d) => !dealNamedInReply(reply, d));
+  if (missing.length === 0) return unchanged;
+  const lines = [`Also directly for ${field}:`, ""];
+  for (const d of missing.slice(0, 3)) lines.push(dealItem(d), "");
   return {
     reply: `${reply.trimEnd()}\n\n${clean(lines.join("\n").trimEnd())}`,
     appended: missing.length,

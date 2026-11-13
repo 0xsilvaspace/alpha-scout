@@ -4,20 +4,27 @@ import { ALL_DEALS, type Deal } from "@/lib/deals";
 import { FEED_URL } from "@/lib/feed";
 import { prepareDeals } from "@/lib/classify";
 import {
+  appendMissingDirectFits,
   appendMissingFieldRoles,
   appendMissingOpenScholarships,
   buildBroadSnapshot,
+  buildFitSnapshot,
   buildJudgmentSnapshot,
   buildSnapshot,
   countsSummary,
+  detectFieldOfStudy,
   detectQuestionTrack,
   fieldSectionDeals,
+  fitCountsLine,
+  fitTier,
   isBroadQuestion,
+  isFitQuestion,
   isGoodModelReply,
   isJudgmentQuestion,
   JUDGMENT_OPEN_FIELD_INSTRUCTION,
   openSectionDeals,
   rankDeals,
+  rankFitShortlist,
   rankJudgmentShortlist,
   requestedCount,
   todayLine,
@@ -523,11 +530,24 @@ export async function POST(req: Request) {
   // the shortlist, the instruction and the guarantees all stay inside
   // it, so a jobs question is never answered with scholarships.
   const askedTrack = detectQuestionTrack(question);
-  const ranked = judgment
-    ? rankJudgmentShortlist(deals, question)
-    : broad
-      ? []
-      : rankDeals(deals, question);
+  // Fit questions ("jobs a physics student can apply for") use the
+  // strict fit shortlist, not the judgment one: only listings whose
+  // own text makes them a fit for the named field, tiered, with
+  // senior roles and umbrella boards out. A "my field" question with
+  // no field named falls back to the judgment shortlist.
+  const fitField = isFitQuestion(question)
+    ? detectFieldOfStudy(question)
+    : null;
+  const fitShortlist =
+    fitField !== null ? rankFitShortlist(deals, question) : null;
+  const fit = fitShortlist !== null;
+  const ranked = fit
+    ? fitShortlist.all
+    : judgment
+      ? rankJudgmentShortlist(deals, question)
+      : broad
+        ? []
+        : rankDeals(deals, question);
 
   const systemIntro = [
     "You are Scout, the assistant for Alpha Scout, a site that lists free opportunities open to Nigeria: scholarships, grants, hackathons, competitions, remote jobs and free tools.",
@@ -568,10 +588,37 @@ export async function POST(req: Request) {
     "Keep every answer under 250 words. Write it as one short opening line, then a numbered list: number each item (1., 2., 3., ...) and put a blank line before each number, so the items are clearly separated. Each item is the title in **bold** on its own line, one short line saying what it offers, one line with the closing date, then the official source link on its own line as [Official source](url). Never print a raw URL, and never use bold anywhere except the title line.",
     "Opportunities:",
   ].join("\n");
+  // Fit questions get their own prompt: answer the fit question
+  // directly in prose first, list only the genuine fits, and never
+  // pad to 5 or quote the site totals. The old prompt forced a
+  // numbered list of up to 5 for every question and always prepended
+  // the full-list counts, so a physics question came back as "48
+  // remote jobs in total" with generic roles in it.
+  const systemFit =
+    fit && fitShortlist && fitField
+      ? [
+          ...systemIntro,
+          `The user asked which opportunities a ${fitField} student or graduate can actually apply for. Answer that question directly, not the whole list.`,
+          "The shortlist below is already filtered to genuine fits, split into labelled tiers: 'Directly for <field>', '<field>-adjacent' and (for scholarships and grants only) 'Open to all disciplines'. Each entry says why it fits and what level it needs.",
+          "Start with one or two short sentences: how many directly-fitting opportunities there are, and the split between a current student and a graduate when the question asks about both. If the question asks about both a student and a graduate, say separately what each can apply for.",
+          "Then list ONLY the fitting opportunities from the shortlist, in the order given. Never add a generic, senior or open-to-anyone role to reach 5 items: if only 1 or 2 fit, list only those. Never name an opportunity that is not in the shortlist.",
+          "For each item, say in one line exactly why it fits, using the requirement in its entry (for example 'asks for a strong physics background' or 'lists physics among the eligible STEM fields'), and state its level bar (for example 'needs an MSc or PhD' or 'no degree level stated').",
+          "If nothing in the shortlist fits, say so plainly in two or three sentences and do not invent or pad with other listings.",
+          "Do NOT report the total number of opportunities on the site, and do NOT say how many jobs, scholarships or grants there are in total: that total is not the answer to this question.",
+          "Never invent details, values or deadlines. Always include the official source link for any opportunity you mention.",
+          "Format: one short opening (prose, not a list), then a numbered list of only the fits. Number each item (1., 2., ...) and put a blank line before each number. Each item is five lines: the title on its own line in **bold**, one short line saying what it offers, one line saying exactly why it fits, one line with the closing date (for example 'Closes 16 November 2026 (in 3 days)'), then the official source link on its own line as [Official source](url). Never put the closing date inside the description sentence, never print a raw URL, and never use bold anywhere except the title line. Keep every answer under 250 words.",
+          "Opportunities:",
+        ].join("\n")
+      : "";
   // Judgment questions get a slimmer snapshot (eligibility and
   // requirements trimmed) so more of the shortlist fits in view: the
   // model needs breadth, the right candidates, more than full text.
   const buildPrompt = (maxChars: number) => {
+    if (fit && fitShortlist && fitField) {
+      // No counts line: the site totals are not the answer to a fit
+      // question, and showing them invites the model to quote them.
+      return `${systemFit}\n${fitCountsLine(fitShortlist)}\n${buildFitSnapshot(fitShortlist, maxChars)}`;
+    }
     if (broad && !judgment) {
       return `${systemBroad}\n${countsSummary(deals)}\n${buildBroadSnapshot(deals)}`;
     }
@@ -695,7 +742,14 @@ export async function POST(req: Request) {
           // The gate sees the provider finish reason, so a reply cut
           // by the output token cap is rejected even when its text
           // looks complete.
-          const gate = isGoodModelReply(r.reply, r.finishReason);
+          // A fit question with no fitting opportunity is answered
+          // in plain prose with no source link to give, so the gate
+          // is relaxed for it; every other answer still needs one.
+          const gate = isGoodModelReply(
+            r.reply,
+            r.finishReason,
+            fit ? { requireLink: false, minLength: 80 } : undefined,
+          );
           if (gate.ok) {
             raceController.abort();
             resolve(r);
@@ -730,29 +784,56 @@ export async function POST(req: Request) {
     // scholarships and up to 3 field roles after a "top 3" answer
     // would hand back 9 items for a question that asked for 3.
     if (judgment && !count) {
-      // Deterministic guarantee: the strongest any-discipline
-      // scholarships are appended when the model fails to name them,
-      // so they can never be dropped by the model's choice. It only
-      // runs when the user did not ask for a different kind: for a
-      // jobs question it would append scholarships the user never
-      // asked about.
-      const augmented =
-        askedTrack === null || askedTrack === "scholarships"
-          ? appendMissingOpenScholarships(
-              winner.reply,
-              openSectionDeals(ranked),
-            )
-          : { reply: winner.reply, appended: 0 };
-      // Same guarantee for field-specific roles: the model dropped
-      // the strongest physics fit in run 14 (Atomistic Materials
-      // Modeling Expert) while naming a generic STEM role instead.
-      const fieldAugmented = appendMissingFieldRoles(
-        augmented.reply,
-        fieldSectionDeals(ranked),
-      );
-      finalReply = fieldAugmented.reply;
-      appended = augmented.appended;
-      appendedField = fieldAugmented.appended;
+      if (fit && fitShortlist && fitField) {
+        // Fit guarantee, tier 1 only: append a directly-fitting deal
+        // the model failed to name. Adjacent and open deals are never
+        // appended here: padding is what made the old answers wrong.
+        // Scholarships keep the flagship open-scholarship guarantee
+        // as well, because for a graduate those ARE genuine fits,
+        // not padding.
+        const direct = appendMissingDirectFits(
+          winner.reply,
+          fitShortlist.all.filter((d) => fitTier(d, fitField) === 1),
+          fitField,
+        );
+        let replyAfter = direct.reply;
+        let appendedSchol = 0;
+        if (askedTrack === null || askedTrack === "scholarships") {
+          const augmented = appendMissingOpenScholarships(
+            replyAfter,
+            openSectionDeals(ranked),
+          );
+          replyAfter = augmented.reply;
+          appendedSchol = augmented.appended;
+        }
+        finalReply = replyAfter;
+        appended = appendedSchol;
+        appendedField = direct.appended;
+      } else {
+        // Deterministic guarantee: the strongest any-discipline
+        // scholarships are appended when the model fails to name them,
+        // so they can never be dropped by the model's choice. It only
+        // runs when the user did not ask for a different kind: for a
+        // jobs question it would append scholarships the user never
+        // asked about.
+        const augmented =
+          askedTrack === null || askedTrack === "scholarships"
+            ? appendMissingOpenScholarships(
+                winner.reply,
+                openSectionDeals(ranked),
+              )
+            : { reply: winner.reply, appended: 0 };
+        // Same guarantee for field-specific roles: the model dropped
+        // the strongest physics fit in run 14 (Atomistic Materials
+        // Modeling Expert) while naming a generic STEM role instead.
+        const fieldAugmented = appendMissingFieldRoles(
+          augmented.reply,
+          fieldSectionDeals(ranked),
+        );
+        finalReply = fieldAugmented.reply;
+        appended = augmented.appended;
+        appendedField = fieldAugmented.appended;
+      }
     }
     // The model is told "exactly N", but it sometimes lists more
     // anyway: trim the reply to exactly N items, deterministically.
