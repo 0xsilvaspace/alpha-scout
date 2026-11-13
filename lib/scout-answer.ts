@@ -1880,6 +1880,32 @@ export function fitCountsLine(s: FitShortlist): string {
   return `${parts.join(". ")}.`;
 }
 
+/** The concrete evidence for a fit, so the model's why-it-fits line
+ *  states the actual link instead of a vague paraphrase: which word
+ *  matched, and where in the listing it sits. */
+function fitEvidence(d: ResolvedDeal, field: string): string {
+  const tier = fitTier(d, field);
+  if (tier === 1) {
+    for (const w of fitTierWords(field)) {
+      if (hasWord(d.title, w)) return `the title names ${w}`;
+      if (hasWord(d.requirements, w)) return `the requirements list ${w} as an eligible field`;
+      if (hasWord(d.eligibility, w)) return `the eligibility names ${w}`;
+    }
+    return `names ${field}`;
+  }
+  if (tier === 2) {
+    const expansion = (FIELD_EXPANSIONS[field] ?? []).filter(
+      (w) => !fitTierWords(field).includes(w),
+    );
+    for (const w of expansion) {
+      if (hasWord(d.title, w)) return `the title names ${w}`;
+      if (hasWord(d.requirements, w)) return `the requirements name ${w}`;
+    }
+    return `covers ${field} through a neighbouring field`;
+  }
+  return "open to all disciplines";
+}
+
 function compactFitDeal(d: ResolvedDeal, field: string) {
   const tier = fitTier(d, field);
   return {
@@ -1891,6 +1917,7 @@ function compactFitDeal(d: ResolvedDeal, field: string) {
         : tier === 2
           ? `${field}-adjacent`
           : "open to all disciplines",
+    evidence: fitEvidence(d, field),
     level: fitLevel(d),
     value: d.estimatedValue,
     eligibility: shorten(d.eligibility, 120),
