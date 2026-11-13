@@ -1540,6 +1540,96 @@ function buildSnapshotFrom(
 }
 
 /* ------------------------------------------------------------------ */
+/* "Show more" follow-ups                                            */
+/* ------------------------------------------------------------------ */
+
+// A follow-up asking for more after a list answer ("show me more",
+// "what else", "any more jobs?") lists the next deals from the same
+// shortlist the previous answer drew from: never repeats the ones
+// already shown, and never answers with a different kind than the one
+// the user asked about. Four items in the first answer is deliberate
+// (it keeps the model fast); the follow-up is how the rest surface.
+
+const SHOW_MORE_RE =
+  /^\s*(show (me |us )?(more|the rest|others?)|more|what else|any more|and (the rest|others?)|see more|next|continue)\b/i;
+
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** The deals a "show more" follow-up should list: the ranked
+ *  candidates for the previous question, minus the ones the previous
+ *  reply already named. Returns null when the message is not a
+ *  follow-up, when there is no previous answer to continue from, or
+ *  when the follow-up names a different kind than the previous
+ *  question (that is a fresh question, answered by the normal flow). */
+export function tryShowMore(
+  deals: ResolvedDeal[],
+  messages: ChatTurn[],
+): DeterministicAnswer | null {
+  const current = messages[messages.length - 1];
+  if (
+    !current ||
+    current.role !== "user" ||
+    !SHOW_MORE_RE.test(current.content)
+  ) {
+    return null;
+  }
+  let prevAssistantIdx = -1;
+  for (let i = messages.length - 2; i >= 0; i--) {
+    if (messages[i].role === "assistant") {
+      prevAssistantIdx = i;
+      break;
+    }
+  }
+  if (prevAssistantIdx < 0) return null;
+  let prevUserIdx = -1;
+  for (let i = prevAssistantIdx - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      prevUserIdx = i;
+      break;
+    }
+  }
+  if (prevUserIdx < 0) return null;
+  const prevQuestion = messages[prevUserIdx].content;
+  const prevReply = messages[prevAssistantIdx].content;
+
+  const askedTrack = detectQuestionTrack(current.content);
+  const prevTrack = detectQuestionTrack(prevQuestion);
+  if (askedTrack && prevTrack && askedTrack !== prevTrack) return null;
+
+  const active = activeDeals(deals);
+  const candidates = isJudgmentQuestion(prevQuestion)
+    ? rankJudgmentShortlist(active, prevQuestion)
+    : rankDeals(active, prevQuestion);
+  const inScope = askedTrack
+    ? candidates.filter((d) => d.track === askedTrack)
+    : candidates;
+  const remaining = inScope.filter((d) => !dealNamedInReply(prevReply, d));
+  const labelTrack = askedTrack ?? prevTrack ?? remaining[0]?.track ?? null;
+  const label = labelTrack
+    ? (TRACK_LABELS[labelTrack] ?? labelTrack)
+    : "opportunities";
+  if (remaining.length === 0) {
+    return {
+      type: "show-more-none",
+      reply: `That was all of them. There are no more ${label} on the site that match.`,
+    };
+  }
+  const shown = remaining.slice(0, 5);
+  const reply = listReply(
+    `Here are ${shown.length} more ${label}:`,
+    shown,
+  );
+  const extra =
+    remaining.length > shown.length
+      ? `\n\nThere are ${remaining.length - shown.length} more after these. Ask again to see them.`
+      : "";
+  return { type: "show-more", reply: `${reply}${extra}` };
+}
+
+/* ------------------------------------------------------------------ */
 /* Deterministic guarantee for judgment answers                      */
 /* ------------------------------------------------------------------ */
 

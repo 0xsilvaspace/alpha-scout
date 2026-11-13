@@ -22,6 +22,7 @@ import {
   todayLine,
   TRACK_LABELS,
   tryDeterministic,
+  tryShowMore,
 } from "@/lib/scout-answer";
 
 const GEMINI_MODEL = "gemini-3.5-flash-lite";
@@ -350,6 +351,35 @@ export async function POST(req: Request) {
   // Same list the site displays: dedupe and re-classify first, so the
   // counts, ranking and snapshot all describe the same opportunities.
   const deals = prepareDeals(await loadDeals());
+
+  // A follow-up asking for more lists the next deals from the same
+  // shortlist the previous answer drew from, never repeats the ones
+  // already shown. It needs the full previous reply to know what was
+  // shown: the model history above is sliced to 500 chars per message,
+  // so this uses the incoming messages unsliced.
+  const fullMessages = incoming
+    .filter(
+      (m) =>
+        (m.role === "user" || m.role === "assistant") &&
+        typeof m.content === "string" &&
+        m.content.trim().length > 0,
+    )
+    .map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content as string,
+    }))
+    .slice(-6);
+  const showMore = tryShowMore(deals, fullMessages);
+  if (showMore) {
+    console.log(
+      "[ask-scout] answered",
+      JSON.stringify({
+        path: `deterministic:${showMore.type}`,
+        question: questionLog,
+      }),
+    );
+    return NextResponse.json({ reply: showMore.reply });
+  }
 
   // Deterministic first: if the listings themselves answer the question,
   // answer from the data with no model call at all, so it cannot fail
