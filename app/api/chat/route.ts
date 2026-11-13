@@ -19,8 +19,10 @@ import {
   openSectionDeals,
   rankDeals,
   rankJudgmentShortlist,
+  requestedCount,
   todayLine,
   TRACK_LABELS,
+  trimToCount,
   tryDeterministic,
   tryShowMore,
 } from "@/lib/scout-answer";
@@ -493,6 +495,11 @@ export async function POST(req: Request) {
   // Only the model path needs API keys; the deterministic path above
   // already answered without them. Providers join the race only when
   // their key is set in Vercel (see lib/model-racers).
+  // When the user asked for a specific number ("top 3"), the model
+  // lists exactly that many: the prompt says so, the guarantee
+  // appends are skipped (they would push the total past the count),
+  // and the reply is trimmed to the count deterministically.
+  const count = requestedCount(question);
   const providers = availableProviders({
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     GEMINI_API_KEY_2: process.env.GEMINI_API_KEY_2,
@@ -528,6 +535,9 @@ export async function POST(req: Request) {
     "Use that date when judging what is closing soon or already closed. Do not guess the date.",
     "Answer only from the opportunity list below. Summarize opportunities and brief the user on requirements, eligibility, deadlines, action steps and the official source.",
   ];
+  const listLine = count
+    ? `Format every answer like this: one short opening line, then a numbered list of exactly ${count} opportunities. Number each item (1., 2., 3., ...) and put a blank line before each number, so the items are clearly separated. Each item is four lines: the title on its own line in **bold**, one short line saying what it offers, one line with the closing date (for example 'Closes 16 November 2026 (in 3 days)'), then the official source link on its own line as [Official source](url). Never put the closing date inside the description sentence, never print a raw URL, and never use bold anywhere except the title line. Keep every answer under 250 words.`
+    : "Format every answer like this: one short opening line, then a numbered list of at most 5 opportunities. Number each item (1., 2., 3., ...) and put a blank line before each number, so the items are clearly separated. Each item is four lines: the title on its own line in **bold**, one short line saying what it offers, one line with the closing date (for example 'Closes 16 November 2026 (in 3 days)'), then the official source link on its own line as [Official source](url). Never put the closing date inside the description sentence, never print a raw URL, and never use bold anywhere except the title line. Keep every answer under 250 words.";
   const systemSpecific = [
     ...systemIntro,
     "When the user asks about the whole list, use the counts line above the list to report the totals, and summarize by category instead of listing every item one by one. The list below is only a sample of the full list, ranked for this question.",
@@ -545,7 +555,7 @@ export async function POST(req: Request) {
         ]),
     "Never invent details, values or deadlines. If the list does not contain the answer, say so plainly and suggest checking the official source.",
     "Always include the official source link for any opportunity you mention.",
-    "Format every answer like this: one short opening line, then a numbered list of at most 5 opportunities. Number each item (1., 2., 3., ...) and put a blank line before each number, so the items are clearly separated. Each item is four lines: the title on its own line in **bold**, one short line saying what it offers, one line with the closing date (for example 'Closes 16 November 2026 (in 3 days)'), then the official source link on its own line as [Official source](url). Never put the closing date inside the description sentence, never print a raw URL, and never use bold anywhere except the title line. Keep every answer under 250 words.",
+    listLine,
     "Opportunities:",
   ].join("\n");
   const systemBroad = [
@@ -716,7 +726,10 @@ export async function POST(req: Request) {
     let finalReply = winner.reply;
     let appended = 0;
     let appendedField = 0;
-    if (judgment) {
+    // A count request skips the guarantees: appending up to 3
+    // scholarships and up to 3 field roles after a "top 3" answer
+    // would hand back 9 items for a question that asked for 3.
+    if (judgment && !count) {
       // Deterministic guarantee: the strongest any-discipline
       // scholarships are appended when the model fails to name them,
       // so they can never be dropped by the model's choice. It only
@@ -741,6 +754,9 @@ export async function POST(req: Request) {
       appended = augmented.appended;
       appendedField = fieldAugmented.appended;
     }
+    // The model is told "exactly N", but it sometimes lists more
+    // anyway: trim the reply to exactly N items, deterministically.
+    if (count) finalReply = trimToCount(finalReply, count);
     console.log(
       "[ask-scout] answered",
       JSON.stringify({

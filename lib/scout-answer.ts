@@ -750,14 +750,109 @@ function countLabel(track: DisplayTrack | null, n: number): string {
   return n === 1 ? `1 ${singularLabel(base)}` : `${n} ${base}`;
 }
 
-/** Header plus up to 5 numbered deal items, with a blank line between
- *  items so each one reads as its own entry. */
-function listReply(header: string, items: ResolvedDeal[]): string {
+/** Header plus numbered deal items, with a blank line between items
+ *  so each one reads as its own entry. The default is 5; a question
+ *  that asks for a specific number passes its count as the limit. */
+function listReply(header: string, items: ResolvedDeal[], limit = 5): string {
   const lines = [header, ""];
-  items.slice(0, 5).forEach((d, i) => {
+  items.slice(0, limit).forEach((d, i) => {
     lines.push(dealItem(d, i + 1), "");
   });
   return lines.join("\n").trimEnd();
+}
+
+const WORD_NUMBERS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+  eight: 8, nine: 9, ten: 10,
+};
+const WORD_NUMBER_RE = "(one|two|three|four|five|six|seven|eight|nine|ten)";
+const CATEGORY_NOUNS =
+  "grants|scholarships|hackathons|competitions|jobs|opportunities|deals|tools";
+
+/** The number of items a question explicitly asks for ("top 3",
+ *  "give me 5", "three grants"), or null when it asks for none. A
+ *  reply must list exactly this many and say nothing about the
+ *  total: "top 3 grants" is 3 grants, not 5, and never "18 in
+ *  total". Capped at 10: a longer list cannot fit the 250-word
+ *  answer format, and the rest surface through "show me more". */
+export function requestedCount(question: string): number | null {
+  const q = question.toLowerCase();
+  const cap = (n: number) => (n >= 1 && n <= 10 ? n : n > 10 ? 10 : null);
+  let m = q.match(/\btop\s+(\d{1,2})\b/);
+  if (m) return cap(Number(m[1]));
+  m = q.match(new RegExp(`\\btop\\s+${WORD_NUMBER_RE}\\b`));
+  if (m) return WORD_NUMBERS[m[1]];
+  m = q.match(/\b(\d{1,2})\s+top\b/);
+  if (m) return cap(Number(m[1]));
+  m = q.match(
+    new RegExp(`\\b(?:first|next)\\s+(\\d{1,2})\\s+(?:${CATEGORY_NOUNS})\\b`),
+  );
+  if (m) return cap(Number(m[1]));
+  m = q.match(/\b(?:give|show|list|find|bring|get)\s+(?:me\s+|us\s+)?(\d{1,2})\b/);
+  if (m) return cap(Number(m[1]));
+  m = q.match(new RegExp(`\\b(\\d{1,2})\\s+(?:${CATEGORY_NOUNS})\\b`));
+  if (m) return cap(Number(m[1]));
+  m = q.match(new RegExp(`\\b${WORD_NUMBER_RE}\\s+(?:${CATEGORY_NOUNS})\\b`));
+  if (m) return WORD_NUMBERS[m[1]];
+  return null;
+}
+
+/** "grants" / "remote jobs" / "opportunities": the plural label for
+ *  a track, without any count, for count-requested headers. */
+function pluralLabel(track: DisplayTrack | null): string {
+  if (!track) return "opportunities";
+  return TRACK_LABELS[track] ?? track;
+}
+
+/** Trim a model reply to exactly n numbered items: keep the opening
+ *  line and the first n items, drop any extra items and anything
+ *  after them. The model is told "exactly N", but it sometimes lists
+ *  more anyway; this enforces the contract deterministically.
+ *  Returns the reply unchanged when it has n or fewer numbered
+ *  items, or none at all. */
+export function trimToCount(reply: string, n: number): string {
+  if (n <= 0) return reply;
+  const isTitle = (l: string) =>
+    /^\d+\.\s+\*\*[^*]+\*\*$/.test(l) || /^\*\*[^*]+\*\*$/.test(l);
+  const blocks = reply.split(/\n\s*\n/).filter((b) => b.trim().length > 0);
+  const groups: string[][] = [];
+  for (const block of blocks) {
+    const lines = block
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    let current: string[] = [];
+    for (const line of lines) {
+      if (current.length > 0 && isTitle(line)) {
+        groups.push(current);
+        current = [line];
+      } else {
+        current.push(line);
+      }
+    }
+    if (current.length > 0) groups.push(current);
+  }
+  const out: string[] = [];
+  let kept = 0;
+  let dropped = false;
+  for (const g of groups) {
+    if (isTitle(g[0])) {
+      if (kept >= n) {
+        dropped = true;
+        break;
+      }
+      kept += 1;
+      out.push(g.join("\n"));
+    } else {
+      if (kept >= n) {
+        dropped = true;
+        break;
+      }
+      out.push(g.join("\n"));
+    }
+  }
+  if (kept === 0 || !dropped) return reply;
+  return out.join("\n\n");
 }
 
 /** Broad question: counts plus one example per track, with its link. */
@@ -882,12 +977,16 @@ export function tryDeterministic(
     let subset = active.filter(window.predicate);
     if (track) subset = subset.filter((d) => d.track === track);
     if (subset.length > 0) {
+      const n = requestedCount(question);
       const label = countLabel(track, subset.length);
       return {
         type: "filter-window",
         reply: listReply(
-          `${label} close${subset.length === 1 ? "s" : ""} ${window.label}:`,
+          n
+            ? `Here are the top ${n} ${pluralLabel(track)} closing ${window.label}:`
+            : `${label} close${subset.length === 1 ? "s" : ""} ${window.label}:`,
           [...subset].sort(bySoonest),
+          n ?? 5,
         ),
       };
     }
@@ -908,11 +1007,15 @@ export function tryDeterministic(
     let subset = active.filter((d) => d.costType === cost.cost);
     if (track) subset = subset.filter((d) => d.track === track);
     if (subset.length > 0) {
+      const n = requestedCount(question);
       return {
         type: "filter-cost",
         reply: listReply(
-          `${oppCount(subset.length)} ${isAre(subset.length)} ${cost.label}${track ? ` in ${TRACK_LABELS[track] ?? track}` : ""}, soonest closing first:`,
+          n
+            ? `Here are the top ${n} ${pluralLabel(track)} (${cost.label}):`
+            : `${oppCount(subset.length)} ${isAre(subset.length)} ${cost.label}${track ? ` in ${TRACK_LABELS[track] ?? track}` : ""}, soonest closing first:`,
           [...subset].sort(bySoonest),
+          n ?? 5,
         ),
       };
     }
@@ -932,11 +1035,15 @@ export function tryDeterministic(
         ? allMatch
         : subset.filter((d) => eligWords.some((w) => eligibilityMatches(d.eligibility, w)));
     if (anyMatch.length > 0) {
+      const n = requestedCount(question);
       return {
         type: "filter-eligibility",
         reply: listReply(
-          `${oppCount(anyMatch.length)} match${anyMatch.length === 1 ? "es" : ""} "${eligWords.join(" ")}"${track ? ` in ${TRACK_LABELS[track] ?? track}` : ""}:`,
+          n
+            ? `Here are the top ${n} ${pluralLabel(track)} matching "${eligWords.join(" ")}":`
+            : `${oppCount(anyMatch.length)} match${anyMatch.length === 1 ? "es" : ""} "${eligWords.join(" ")}"${track ? ` in ${TRACK_LABELS[track] ?? track}` : ""}:`,
           [...anyMatch].sort(bySoonest),
+          n ?? 5,
         ),
       };
     }
@@ -949,16 +1056,24 @@ export function tryDeterministic(
     if (track) closing = closing.filter((d) => d.track === track);
     closing.sort(bySoonest);
     if (closing.length > 0) {
+      const n = requestedCount(question);
       const label = track
         ? `${TRACK_LABELS[track] ?? track} closing soon`
         : "Opportunities closing soon (next 14 days)";
-      return { type: "filter-deadline", reply: listReply(`${label}:`, closing) };
+      return {
+        type: "filter-deadline",
+        reply: listReply(
+          n ? `Here are the top ${n} ${pluralLabel(track)} closing soon:` : `${label}:`,
+          closing,
+          n ?? 5,
+        ),
+      };
     }
     const label = track ? `${TRACK_LABELS[track] ?? track}` : "opportunities";
     const soonest = [...active]
       .filter((d) => (track ? d.track === track : true))
       .sort(bySoonest)
-      .slice(0, 3);
+      .slice(0, requestedCount(question) ?? 3);
     if (soonest.length === 0) {
       return {
         type: "filter-deadline",
@@ -981,9 +1096,18 @@ export function tryDeterministic(
     }
     valued.sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0) || bySoonest(a, b));
     if (valued.length > 0) {
+      const n = requestedCount(question);
       return {
         type: "filter-value",
-        reply: listReply("The biggest prizes on the site:", valued),
+        reply: listReply(
+          n
+            ? track
+              ? `The ${n} biggest ${pluralLabel(track)} on the site:`
+              : `The ${n} biggest prizes on the site:`
+            : "The biggest prizes on the site:",
+          valued,
+          n ?? 5,
+        ),
       };
     }
   }
@@ -993,11 +1117,15 @@ export function tryDeterministic(
   if (track) {
     const inTrack = active.filter((d) => d.track === track).sort(bySoonest);
     if (inTrack.length > 0) {
+      const n = requestedCount(question);
       return {
         type: "filter-track",
         reply: listReply(
-          `${countLabel(track, inTrack.length)} in total, soonest closing first:`,
+          n
+            ? `Here are the top ${n} ${pluralLabel(track)}:`
+            : `${countLabel(track, inTrack.length)} in total, soonest closing first:`,
           inTrack,
+          n ?? 5,
         ),
       };
     }
@@ -1013,7 +1141,7 @@ export function tryDeterministic(
     const track = detectTrack(tokens);
     let matched = scored.filter((s) => s.score > 0);
     if (track) matched = matched.filter((s) => s.d.track === track);
-    matched = matched.slice(0, 5);
+    matched = matched.slice(0, requestedCount(question) ?? 5);
     if (matched.length === 0) return null;
     return {
       type: "filter-keywords",
@@ -1617,7 +1745,7 @@ export function tryShowMore(
       reply: `That was all of them. There are no more ${label} on the site that match.`,
     };
   }
-  const shown = remaining.slice(0, 5);
+  const shown = remaining.slice(0, requestedCount(prevQuestion) ?? 5);
   const reply = listReply(
     `Here are ${shown.length} more ${label}:`,
     shown,
