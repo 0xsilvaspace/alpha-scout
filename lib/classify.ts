@@ -1,0 +1,637 @@
+/**
+ * ALPHA SCOUT: display classification and dedupe.
+ *
+ * The live feed (and the baked-in fallback) carry the raw tracks
+ * (scholarships, jobs, ai-tools, crypto, nfts, banking, cloud, software).
+ * The app re-classifies every deal at load time, so the rules below apply
+ * equally to the feed and the fallback, and survive future daily feed
+ * syncs that re-push the same raw data. Raw feed data is never edited.
+ *
+ * Display tracks: Scholarships, Grants, International Internships, AI Tools,
+ * Hackathons, Competitions, Remote Jobs, Cloud, Software, Banking, Crypto.
+ * Internships are display-classified like Grants and Hackathons: there
+ * is no raw internships track, so an internship is filed under the closest
+ * raw track (jobs) with "Internship" in its title, and the rule below
+ * re-routes it here. A future raw "internships" track is also accepted.
+ * NFTs no longer exist as a
+ * tab: NFT minting tools go to Software, mint events/whitelists go to
+ * Crypto, and hackathons go to Hackathons. Grants are real grants only
+ * (government, industry, foundations, universities), split into kinds
+ * by what they fund: Climate & Energy, Agriculture & Food, Education,
+ * Business & Enterprise, AI & Technology, Research, Social Impact &
+ * Development, and Other. Hackathons split into Web3 & Blockchain,
+ * AI & Machine Learning, Robotics & Hardware, Fintech & Banking,
+ * Software Development, and Other; competitions into Robotics, AI &
+ * Data Science, Software & Technology, Research, and Other. Kinds are
+ * matched on the title only, first match wins, so a new listing is
+ * grouped the same way every day. Chain-foundation builder grants
+ * (Solana, Ethereum, BNB, NEAR, OKX, Superteam and similar) stay in Crypto:
+ * they are ecosystem funding, not grants in the usual sense. Competition
+ * deals are detected by title keywords and beat every tab except
+ * Hackathons.
+ *
+ * Dedupe: each opportunity appears exactly once. Deals are grouped when
+ * they share a normalised source URL, or when their normalised title key
+ * matches (bag of significant title words after stripping descriptors,
+ * parentheticals, years, amounts and filler words). Within a group the
+ * single best entry is kept: verified first, then most complete, then
+ * latest expiry, then newest.
+ *
+ * One hard rule: two deals with different brand alias keys are different
+ * opportunities and never merge, even when they share a title key or a
+ * source URL. That is what separates same-programme listings at different
+ * institutions (Mastercard Foundation at ASU vs Edinburgh share the title
+ * key "foundation mastercard" because the em dash cuts the institution
+ * name, but their alias keys mc-asu and mc-edinburgh differ). CMU-Africa,
+ * ALU and AfOx each have their own alias too (mc-cmu-africa, mc-alu,
+ * mc-afox); an unrecognised Mastercard institution gets no alias at all,
+ * because the old shared "mc-other" alias merged unrelated programmes.
+ * The rule is enforced twice: a union between conflicting-alias deals is
+ * skipped, and
+ * any group that still ends up holding conflicting aliases (merged through
+ * a deal with no alias) is split by alias before the best entry is picked.
+ */
+
+import { daysLeft, type Deal, type Track } from "./deals";
+
+export type DisplayTrack =
+  | "scholarships"
+  | "grants"
+  | "internships"
+  | "ai-tools"
+  | "hackathons"
+  | "competitions"
+  | "jobs"
+  | "cloud"
+  | "software"
+  | "banking"
+  | "crypto";
+
+export const DISPLAY_LABELS: Record<DisplayTrack, string> = {
+  scholarships: "Scholarships",
+  grants: "Grants",
+  internships: "International Internships",
+  "ai-tools": "AI Tools",
+  hackathons: "Hackathons",
+  competitions: "Competitions",
+  jobs: "Remote Jobs",
+  cloud: "Cloud",
+  software: "Software",
+  banking: "Banking",
+  crypto: "Crypto",
+};
+
+export type GrantKind =
+  | "climate"
+  | "agriculture"
+  | "education"
+  | "business"
+  | "ai"
+  | "research"
+  | "development"
+  | "other";
+
+export type HackathonKind =
+  | "web3"
+  | "ai"
+  | "robotics"
+  | "fintech"
+  | "software"
+  | "other";
+
+export type CompetitionKind =
+  | "robotics"
+  | "ai"
+  | "software"
+  | "research"
+  | "other";
+
+/** Display labels for each kind, shared by the filter pills and the card badges. */
+export const GRANT_KIND_LABELS: Record<GrantKind, string> = {
+  climate: "Climate & Energy",
+  agriculture: "Agriculture & Food",
+  education: "Education",
+  business: "Business & Enterprise",
+  ai: "AI & Technology",
+  research: "Research",
+  development: "Social Impact & Development",
+  other: "Other Grants",
+};
+
+export const HACKATHON_KIND_LABELS: Record<HackathonKind, string> = {
+  web3: "Web3 & Blockchain",
+  ai: "AI & Machine Learning",
+  robotics: "Robotics & Hardware",
+  fintech: "Fintech & Banking",
+  software: "Software Development",
+  other: "Other Hackathons",
+};
+
+export const COMPETITION_KIND_LABELS: Record<CompetitionKind, string> = {
+  robotics: "Robotics Competitions",
+  ai: "AI & Data Science",
+  software: "Software & Technology",
+  research: "Research Competitions",
+  other: "Other Competitions",
+};
+
+export interface ResolvedDeal extends Omit<Deal, "track"> {
+  /** Display track after re-classification (never "nfts"). */
+  track: DisplayTrack;
+  rawTrack: Track;
+  grantKind?: GrantKind;
+  hackathonKind?: HackathonKind;
+  competitionKind?: CompetitionKind;
+  /** Funder / provider name, derived from the title or source domain. */
+  funder: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* Classification                                                      */
+/* ------------------------------------------------------------------ */
+
+const HACKATHON_RE =
+  /hackathon|buildathon|hack-a-thon|zecathon|robomaster|space apps|hack week/i;
+/**
+ * International internships: paid / fully funded research or industry
+ * placements abroad, for students or recent graduates. Matched on the
+ * title only, so a job whose description merely mentions interns does
+ * not get pulled in. "Summer student" is CERN/DESY wording for the same
+ * thing, and is included only when paired with internship/student-programme
+ * wording in the title check below via the title itself.
+ */
+const INTERNSHIP_RE = /internship|internships|summer student/i;
+/**
+ * Competition titles. "challenge" and "games" are deliberately broad
+ * (robotics and coding competitions are named that way), but hackathons
+ * are checked first and keep their own tab.
+ */
+const COMPETITION_RE = /competition|contest|\bcup\b|games|challenge/i;
+const GRANT_RE = /grant|subsidy|subsidies/i;
+const AI_HINT_RE =
+  /artificial intelligence|\bAI\b|machine learning|large language|\bLLM\b|neural|generative ai|ai agent/i;
+/** Chain-foundation / ecosystem funders: their builder grants are Crypto, not Grants. */
+const CHAIN_FUNDER_RE =
+  /solana|ethereum|bnb|near|okx|superteam|base|arbitrum|polygon|avalanche|chainlink/i;
+
+/** [pattern, display name]: first match wins. */
+const FUNDERS: [RegExp, string][] = [
+  [/solana/i, "Solana Foundation"],
+  [/ethereum foundation/i, "Ethereum Foundation"],
+  [/bnb/i, "BNB Chain"],
+  [/superteam/i, "Superteam"],
+  [/okx/i, "OKX"],
+  [/\bnear\b/i, "NEAR"],
+  [/tony elumelu/i, "Tony Elumelu Foundation"],
+  [/anzisha/i, "Anzisha Prize"],
+  [/cartier/i, "Cartier Women's Initiative"],
+  [/smedan/i, "SMEDAN"],
+  [/\b3mtt\b/i, "3MTT"],
+  [/mtn foundation/i, "MTN Foundation"],
+  [/lingua/i, "LINGUA Africa"],
+  [/huawei/i, "Huawei"],
+  [/first robotics/i, "FIRST"],
+  [/\bvex\b/i, "VEX Robotics"],
+  [/imagine cup/i, "Microsoft"],
+  [/kaggle/i, "Kaggle"],
+  [/daad/i, "DAAD"],
+  [/mastercard/i, "Mastercard Foundation"],
+  [/erasmus/i, "Erasmus Mundus"],
+  [/commonwealth/i, "Commonwealth (CSC)"],
+  [/gates cambridge/i, "Gates Cambridge"],
+  [/sciences po/i, "Sciences Po"],
+  [/openai/i, "OpenAI"],
+  [/anthropic/i, "Anthropic"],
+  [/google/i, "Google"],
+  [/github/i, "GitHub"],
+  [/jetbrains/i, "JetBrains"],
+  [/microsoft|azure/i, "Microsoft"],
+  [/oracle/i, "Oracle"],
+  [/amazon|\baws\b/i, "Amazon Web Services"],
+  [/mistral/i, "Mistral AI"],
+  [/\bmeta\b/i, "Meta"],
+  [/cloudflare/i, "Cloudflare"],
+  [/assemblyai/i, "AssemblyAI"],
+  [/inception/i, "Inception"],
+  [/mlh/i, "MLH"],
+  [/turing/i, "Turing"],
+  [/mercor/i, "Mercor"],
+  [/micro1/i, "micro1"],
+  [/outlier/i, "Outlier"],
+  [/remotasks/i, "Remotasks"],
+  [/grey/i, "Grey"],
+  [/cleva/i, "Cleva"],
+  [/payoneer/i, "Payoneer"],
+  [/wise/i, "Wise"],
+  [/chipper/i, "Chipper Cash"],
+  [/fundall/i, "Fundall"],
+  [/astropay/i, "AstroPay"],
+  [/getplu/i, "GetPlu"],
+  [/worldfirst/i, "WorldFirst"],
+  [/rarible/i, "Rarible"],
+  [/opensea/i, "OpenSea"],
+  [/notion/i, "Notion"],
+  [/figma/i, "Figma"],
+  [/affinity|canva/i, "Canva"],
+  [/app.?sumo/i, "AppSumo"],
+  [/multcloud/i, "MultCloud"],
+  [/ashampoo/i, "Ashampoo"],
+  [/vovsoft/i, "Vovsoft"],
+  [/winxvideo/i, "WinXvideo"],
+  [/speechmatics/i, "Speechmatics"],
+  [/you\.com/i, "You.com"],
+  [/groq/i, "Groq"],
+  [/openrouter/i, "OpenRouter"],
+  [/soso/i, "SoSoValue"],
+  [/mitosis/i, "Mitosis"],
+  [/asentum/i, "Asentum"],
+  [/elyon/i, "ELYON"],
+  [/saturn/i, "Saturn"],
+  [/miaoushi/i, "Miaoushi"],
+  [/binance/i, "Binance"],
+];
+
+export function funderName(deal: Deal): string {
+  const hay = `${deal.title} ${deal.estimatedValue}`;
+  for (const [re, name] of FUNDERS) {
+    if (re.test(hay)) return name;
+  }
+  try {
+    const host = new URL(deal.sourceUrl).hostname.replace(/^www\./, "");
+    return host;
+  } catch {
+    return "Official source";
+  }
+}
+
+/** Hackathon kinds, matched on the title only, first match wins. */
+const HACKATHON_WEB3_RE =
+  /web3|blockchain|\bnear\b|solana|ethereum|\bbnb\b|okx|x layer|arbitrum|polygon|crypto|bitcoin|defi|\bnft\b|token|coin|wallet|onchain|on-chain/i;
+const HACKATHON_AI_RE =
+  /ai(?![a-z])|artificial intelligence|machine learning|\bml\b|llm|generative|neural|deep learning|openai|anthropic|gemini|chatgpt|computer vision|data science/i;
+const HACKATHON_ROBOTICS_RE =
+  /robot|robomaster|vex|drone|embedded|hardware|\biot\b|arduino|raspberry|humanoid/i;
+const HACKATHON_FINTECH_RE = /fintech|bank|pay/i;
+const HACKATHON_SOFTWARE_RE =
+  /software|dev|cod(e|ing)|web|apps?|\bapi\b|cloud|open source|stack|front.?end|back.?end|mobile|saas|platform|game/i;
+
+/** Competition kinds, matched on the title only, first match wins. */
+const COMPETITION_ROBOTICS_RE = /robot|robomaster|vex|drone|humanoid/i;
+const COMPETITION_AI_RE =
+  /kaggle|ai(?![a-z])|artificial intelligence|machine learning|\bml\b|llm|data science|deep learning/i;
+const COMPETITION_SOFTWARE_RE =
+  /imagine cup|microsoft|software|coding|code|developer|\bict\b|technology|\btech\b/i;
+const COMPETITION_RESEARCH_RE = /research|oil|gas|energy|science/i;
+
+/**
+ * Grant kinds, matched on the title only, first match wins. Title only,
+ * not requirements: the requirements text pulls grants into the wrong
+ * bucket (a community grant whose requirements mention farming is not
+ * an agriculture grant). The order is the taxonomy: a sector grant
+ * whose title also names a technology (AgriTech, EdTech, GreenTech)
+ * belongs to its sector, not to AI & Technology.
+ */
+const GRANT_CLIMATE_RE =
+  /climate|energy|green|environment|ecosystem|\beba\b|\bgef\b|sustainab/i;
+const GRANT_AGRICULTURE_RE = /agritech|agri|agriculture|farm|food/i;
+const GRANT_EDUCATION_RE = /edtech|education|learn|school|student|scholar/i;
+const GRANT_BUSINESS_RE =
+  /startup|smedan|msme|enterprise|small business|conditional|entrepreneur/i;
+const GRANT_RESEARCH_RE = /research/i;
+const GRANT_DEVELOPMENT_RE =
+  /development|social|community|youth|young|women|empowerment|innovat|seed|poverty/i;
+
+function hackathonKindFor(deal: Deal): HackathonKind {
+  const title = deal.title;
+  if (HACKATHON_WEB3_RE.test(title)) return "web3";
+  if (HACKATHON_AI_RE.test(title)) return "ai";
+  if (HACKATHON_ROBOTICS_RE.test(title)) return "robotics";
+  if (HACKATHON_FINTECH_RE.test(title)) return "fintech";
+  if (HACKATHON_SOFTWARE_RE.test(title)) return "software";
+  return "other";
+}
+
+function competitionKindFor(deal: Deal): CompetitionKind {
+  const title = deal.title;
+  if (COMPETITION_ROBOTICS_RE.test(title)) return "robotics";
+  if (COMPETITION_AI_RE.test(title)) return "ai";
+  if (COMPETITION_SOFTWARE_RE.test(title)) return "software";
+  if (COMPETITION_RESEARCH_RE.test(title)) return "research";
+  return "other";
+}
+
+function grantKindFor(deal: Deal): GrantKind {
+  const title = deal.title;
+  if (GRANT_CLIMATE_RE.test(title)) return "climate";
+  if (GRANT_AGRICULTURE_RE.test(title)) return "agriculture";
+  if (GRANT_EDUCATION_RE.test(title)) return "education";
+  if (GRANT_BUSINESS_RE.test(title)) return "business";
+  if (AI_HINT_RE.test(title) || /developer|\bapi\b|digital/i.test(title))
+    return "ai";
+  if (GRANT_RESEARCH_RE.test(title)) return "research";
+  if (GRANT_DEVELOPMENT_RE.test(title)) return "development";
+  return "other";
+}
+
+export function resolveDeal(deal: Deal): ResolvedDeal {
+  const base = { ...deal, rawTrack: deal.track, funder: funderName(deal) };
+
+  // Hackathons win over everything, including competitions.
+  if (HACKATHON_RE.test(deal.title)) {
+    return { ...base, track: "hackathons", hackathonKind: hackathonKindFor(deal) };
+  }
+
+  // International internships win over jobs/scholarships: an internship
+  // filed under the raw jobs track (there is no raw internships
+  // track) is re-routed here, as is any future raw internships track.
+  if (deal.track === "internships" || INTERNSHIP_RE.test(deal.title)) {
+    return { ...base, track: "internships" };
+  }
+
+  // Competitions beat every other tab except Hackathons.
+  if (COMPETITION_RE.test(deal.title)) {
+    return { ...base, track: "competitions", competitionKind: competitionKindFor(deal) };
+  }
+
+  if (deal.track === "nfts") {
+    // Minting tools/platforms go to Software; mint events, whitelists
+    // and passes go to Crypto (on-chain mint opportunities).
+    if (/rarible|opensea/i.test(deal.title) && /mint/i.test(deal.title)) {
+      return { ...base, track: "software" };
+    }
+    return { ...base, track: "crypto" };
+  }
+
+  if (GRANT_RE.test(deal.title)) {
+    // Chain-foundation builder grants are ecosystem funding: they stay
+    // in Crypto. Grants is real grants only (government, industry,
+    // foundations, universities).
+    if (CHAIN_FUNDER_RE.test(deal.title)) {
+      return { ...base, track: "crypto" };
+    }
+    return { ...base, track: "grants", grantKind: grantKindFor(deal) };
+  }
+
+  return { ...base, track: deal.track as DisplayTrack };
+}
+
+/* ------------------------------------------------------------------ */
+/* Dedupe                                                               */
+/* ------------------------------------------------------------------ */
+
+const STOPWORDS = new Set([
+  "the", "a", "an", "and", "or", "for", "of", "in", "on", "at", "to",
+  "with", "by", "from", "up", "no", "per", "via", "x", "&",
+]);
+
+/** Words that describe an offer, not which opportunity it is. */
+const FILLER = new Set([
+  "free", "fully", "funded", "funding", "scholarship", "scholarships",
+  "scholar", "scholars", "program", "programs", "programme", "programmes",
+  "student", "students", "api", "nigeria", "nigerian", "global",
+  "worldwide", "remote", "online", "licence", "license", "lifetime",
+  "official", "grant", "grants", "microgrant", "microgrants",
+  "small", "giveaway", "renewable", "hr", "hrs",
+]);
+
+/**
+ * Single-product brands whose listings differ only in their descriptor
+ * ("Grey: Free USD account", "Grey: Free multi-currency account").
+ * Keyed by the brand token at the start of the title.
+ */
+const BRAND_ALIASES: [RegExp, string][] = [
+  [/^azure for students/i, "azure-students"],
+  [/^oracle cloud/i, "oracle-cloud"],
+  [/^google cloud free/i, "google-cloud-free"],
+  [/^google gemini/i, "gemini-free"],
+  [/^groqcloud/i, "groq-free"],
+  [/^groq\b/i, "groq-free"],
+  [/^openrouter/i, "openrouter-free"],
+  [/^inception mercury/i, "inception-mercury"],
+  [/^assemblyai/i, "assemblyai"],
+  [/^jetbrains/i, "jetbrains-pack"],
+  [/^notion/i, "notion-education"],
+  [/^github student developer pack/i, "github-pack"],
+  [/^divi pixel/i, "divi-pixel"],
+  [/^aws free/i, "aws-free"],
+  [/^mlh fellowship/i, "mlh-fellowship"],
+  [/^erasmus mundus noha/i, "erasmus-noha"],
+  [/^rarible/i, "rarible"],
+  [/^mastercard foundation/i, "mc"],
+  [/^grey\b/i, "bank-grey"],
+  [/^payoneer/i, "bank-payoneer"],
+  [/^wise\b/i, "bank-wise"],
+  [/^cleva/i, "bank-cleva"],
+  [/^astropay/i, "bank-astropay"],
+  [/^fundall/i, "bank-fundall"],
+  [/^chipper/i, "bank-chipper"],
+  [/^getplu/i, "bank-getplu"],
+  [/^worldfirst/i, "bank-worldfirst"],
+];
+
+function singularise(word: string): string {
+  // Latin "-us" words (erasmus, mundus, campus, status) are not plurals.
+  if (word.endsWith("us")) return word;
+  if (word.length > 3 && word.endsWith("s") && !word.endsWith("ss")) {
+    return word.slice(0, -1);
+  }
+  return word;
+}
+
+/** Significant tokens of a title fragment: lowercased, singular, sorted. */
+function tokensOf(fragment: string): string[] {
+  return fragment
+    .toLowerCase()
+    .replace(/programme/g, "program")
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .filter((t) => !/\d/.test(t)) // years, amounts, versions, "12-month"
+    .map(singularise)
+    .filter((t) => !STOPWORDS.has(t) && !FILLER.has(t));
+}
+
+/**
+ * Canonical dedupe key for a deal title, or null when no key applies.
+ * Uses the part before a colon, dash, plus or "via" descriptor, but
+ * only when that part still names the opportunity (2+ significant tokens);
+ * otherwise the whole title is used, so short brand-first titles
+ * ("Mercor: ...") never collapse unrelated listings from the same brand.
+ * A plain hyphen is NOT a descriptor cut: titles like "DAAD … - MSc
+ * Electrical Power Systems, University of Rwanda" carry the distinguishing
+ * detail after the hyphen.
+ */
+export function titleKey(title: string): string | null {
+  const noParens = title.replace(/\([^)]*\)/g, " ");
+  const cut = noParens.split(/\s+(?:\u2014|\u2013|:)\s+|\s*\+\s+|\s+via\s+/i)[0] ?? "";
+  const cutTokens = tokensOf(cut);
+  const source = cutTokens.length >= 2 ? cut : noParens;
+  const tokens = [...new Set(tokensOf(source))].sort();
+  if (tokens.length === 0) return null;
+  return tokens.join(" ");
+}
+
+/** Host/programme-specific aliases that a plain title key cannot catch. */
+function aliasKey(title: string): string | null {
+  const lower = title.toLowerCase();
+  if (lower.includes("mastercard foundation")) {
+    if (lower.includes("sciences po")) return "mc-sciences-po";
+    if (lower.includes("cambridge")) return "mc-cambridge";
+    if (lower.includes("asu") || lower.includes("arizona")) return "mc-asu";
+    if (lower.includes("edinburgh")) return "mc-edinburgh";
+    if (lower.includes("cmu") || lower.includes("carnegie mellon"))
+      return "mc-cmu-africa";
+    if (lower.includes("african leadership") || lower.includes("(alu)"))
+      return "mc-alu";
+    if (lower.includes("afox") || lower.includes("oxford"))
+      return "mc-afox";
+    // Never return a shared generic alias: "mc-other" merged unrelated
+    // programmes (CMU-Africa, ALU and AfOx all fell into it, and only the
+    // best-scoring one survived). An unrecognised institution gets no
+    // alias, so it is grouped by title and URL only.
+    return null;
+  }
+  for (const [re, key] of BRAND_ALIASES) {
+    if (re.test(title)) return key;
+  }
+  return null;
+}
+
+export function normalizeUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return (
+      u.hostname.replace(/^www\./, "") +
+      u.pathname.replace(/\/$/, "")
+    ).toLowerCase();
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
+/** All grouping keys for a deal: URL key, alias key, title key. */
+function groupKeys(deal: Deal): string[] {
+  const keys: string[] = [`url:${normalizeUrl(deal.sourceUrl)}`];
+  const alias = aliasKey(deal.title);
+  if (alias) keys.push(`alias:${alias}`);
+  const tk = titleKey(deal.title);
+  if (tk) keys.push(`title:${tk}`);
+  return keys;
+}
+
+function completeness(deal: Deal): number {
+  return (
+    deal.requirements.length +
+    deal.actionSteps.length +
+    deal.estimatedValue.length
+  );
+}
+
+/** Best entry of a duplicate group: verified, most complete, latest expiry. */
+function bestOf(group: Deal[]): Deal {
+  const score = (d: Deal) => {
+    const dLeft = daysLeft(d);
+    const expiryScore =
+      dLeft === null ? 0.5 : Math.max(0, Math.min(dLeft, 365)) / 365;
+    return (
+      (d.verification === "verified" ? 3 : 0) +
+      (d.valueUsd !== null ? 1 : 0) +
+      expiryScore +
+      completeness(d) / 2000 +
+      d.id * 0.0001 // newest scan entry wins exact ties
+    );
+  };
+  return [...group].sort((a, b) => score(b) - score(a))[0];
+}
+
+/**
+ * Collapse duplicate opportunities: one entry per group. Union-find over
+ * the grouping keys, so a deal matching a group by URL and another by
+ * title still lands in the same group. Two deals with different brand
+ * alias keys never merge, even on a shared title or URL key, and any group
+ * that still holds conflicting aliases (merged through a deal with no
+ * alias) is split by alias before the best entry is picked.
+ */
+export function dedupeDeals(deals: Deal[]): Deal[] {
+  const aliases = deals.map((d) => aliasKey(d.title));
+  const parent = new Map<number, number>();
+  const find = (i: number): number => {
+    const p = parent.get(i) ?? i;
+    if (p !== i) {
+      const root = find(p);
+      parent.set(i, root);
+      return root;
+    }
+    return p;
+  };
+  const union = (a: number, b: number) => {
+    // Conflicting aliases are different opportunities: never merge them.
+    const aa = aliases[a];
+    const ab = aliases[b];
+    if (aa && ab && aa !== ab) return;
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+
+  const keyOwner = new Map<string, number>();
+  deals.forEach((deal, i) => {
+    parent.set(i, i);
+    for (const key of groupKeys(deal)) {
+      const owner = keyOwner.get(key);
+      if (owner === undefined) keyOwner.set(key, i);
+      else union(owner, i);
+    }
+  });
+
+  const groups = new Map<number, Deal[]>();
+  deals.forEach((deal, i) => {
+    const root = find(i);
+    const group = groups.get(root) ?? [];
+    group.push(deal);
+    groups.set(root, group);
+  });
+
+  // Split any group that still holds conflicting aliases (merged through
+  // a deal with no alias): one sub-group per alias, and a deal with no
+  // alias joins the sub-group it shares a source URL with, else the
+  // largest sub-group (ties broken by alias name, for determinism).
+  const splitGroups: Deal[][] = [];
+  for (const group of groups.values()) {
+    const distinct = [...new Set(group.map((d) => aliasKey(d.title)).filter((a): a is string => a !== null))];
+    if (distinct.length <= 1) {
+      splitGroups.push(group);
+      continue;
+    }
+    const byAlias = new Map<string, Deal[]>();
+    const noAlias: Deal[] = [];
+    for (const deal of group) {
+      const a = aliasKey(deal.title);
+      if (a === null) noAlias.push(deal);
+      else {
+        const sub = byAlias.get(a) ?? [];
+        sub.push(deal);
+        byAlias.set(a, sub);
+      }
+    }
+    for (const deal of noAlias) {
+      const url = normalizeUrl(deal.sourceUrl);
+      const urlMatch = [...byAlias.entries()].filter(([, sub]) =>
+        sub.some((d) => normalizeUrl(d.sourceUrl) === url),
+      );
+      const target =
+        urlMatch.length === 1
+          ? urlMatch[0][0]
+          : [...byAlias.entries()]
+              .sort((x, y) => y[1].length - x[1].length || (x[0] < y[0] ? -1 : 1))[0][0];
+      byAlias.get(target)!.push(deal);
+    }
+    splitGroups.push(...byAlias.values());
+  }
+
+  return splitGroups.map(bestOf).sort((a, b) => a.id - b.id);
+}
+
+/** Full load path: dedupe first, then re-classify each kept deal. */
+export function prepareDeals(deals: Deal[]): ResolvedDeal[] {
+  return dedupeDeals(deals).map(resolveDeal);
+}
