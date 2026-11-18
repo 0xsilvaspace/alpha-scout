@@ -14,6 +14,9 @@ function friendlyError(message: string): string {
   if (m.includes("user already registered") || m.includes("already registered")) {
     return "An account with this email already exists. Sign in instead.";
   }
+  if (m.includes("not confirmed")) {
+    return "That email is not confirmed yet. Enter the 6-digit code from the signup email.";
+  }
   if (m.includes("expired")) {
     return "That code expired. Ask for a new code below.";
   }
@@ -134,6 +137,15 @@ export default function AuthPanel({
     });
     setBusy(false);
     if (error) {
+      if (error.message.toLowerCase().includes("not confirmed")) {
+        setMode("check-email");
+        setCode("");
+        setNotice(
+          `We sent a 6-digit code to ${email}. Enter it below to verify your account.`,
+        );
+        setError(friendlyError(error.message));
+        return;
+      }
       setError(friendlyError(error.message));
       return;
     }
