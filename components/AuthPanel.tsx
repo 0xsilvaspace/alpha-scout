@@ -228,7 +228,7 @@ export default function AuthPanel({
                 onChange={(e) =>
                   setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 8))
                 }
-                placeholder="123456"
+                placeholder="12345678"
               />
             </label>
             {error ? (
