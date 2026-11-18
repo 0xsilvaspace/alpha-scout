@@ -294,7 +294,7 @@ export default function Home() {
     }
   };
 
-  // Account: email + password sign up with an email confirmation link, and
+  // Account: email + password sign up with a 6-digit email code, and
   // sign in. Signed-in users get their archive synced and the chatbot.
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
