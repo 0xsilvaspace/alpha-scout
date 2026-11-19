@@ -93,7 +93,7 @@ export default function AuthPanel({
   const handleVerifyCode = async () => {
     resetMessages();
     if (!supabase) return;
-    if (code.trim().length < 6 || code.trim().length > 8) {
+    if (code.trim().length !== 6) {
       setError("Enter the code from the email.");
       return;
     }
@@ -223,10 +223,10 @@ export default function AuthPanel({
                 type="text"
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                maxLength={8}
+                maxLength={6}
                 value={code}
                 onChange={(e) =>
-                  setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 8))
+                  setCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))
                 }
                 placeholder="123456"
               />
@@ -237,7 +237,7 @@ export default function AuthPanel({
             <button
               type="button"
               onClick={handleVerifyCode}
-              disabled={busy || code.length < 6}
+              disabled={busy || code.length !== 6}
               className="mt-4 w-full rounded-md bg-green-800 px-4 py-2.5 text-sm font-medium text-white hover:bg-green-900 disabled:opacity-50"
             >
               {busy ? "Please wait..." : "Verify code"}
