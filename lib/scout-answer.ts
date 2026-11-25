@@ -944,6 +944,22 @@ export function detectRequirement(
   return null;
 }
 
+/** The track a requirement question is about, read from the head of
+ *  the question, before the constraint clause ("grants that don't
+ *  require a bank account" -> grants). Reading the whole question
+ *  lets the constraint's own words hijack the track: "bank account"
+ *  counts as banking and outvotes "grants", so the model is shown
+ *  banking products for a grants question. Falls back to the whole
+ *  question when the head names no track. */
+const CONSTRAINT_START_RE =
+  /\b(that\s+don'?t|that\s+doesn'?t|that\s+do\s+not|that\s+does\s+not|without|requiring|requires?|needs?)\b/i;
+
+export function detectRequirementTrack(question: string): DisplayTrack | null {
+  const idx = question.search(CONSTRAINT_START_RE);
+  const head = idx >= 0 ? question.slice(0, idx) : question;
+  return detectTrack(tokenize(head)) ?? detectTrack(tokenize(question));
+}
+
 /** The deals matching a requirement question, soonest closing first:
  *  the detected track when one is named, the named field when one
  *  is, and the requirement filter itself. Returns null when the
@@ -956,8 +972,7 @@ export function requirementSubset(
 ): { deals: ResolvedDeal[]; kind: RequirementKind; mode: "none" | "required" } | null {
   const found = detectRequirement(question);
   if (!found) return null;
-  const tokens = tokenize(question);
-  const track = detectTrack(tokens);
+  const track = detectRequirementTrack(question);
   const field = detectFieldOfStudy(question);
   let subset = active.filter((d) =>
     found.mode === "none" ? !found.kind.dealRequires(d) : found.kind.dealRequires(d),
@@ -980,7 +995,7 @@ export function requirementSubset(
  *  questions, and a question with no track has no list to filter. */
 export function isRequirementQuestion(question: string): boolean {
   if (/\bhow many\b/i.test(question)) return false;
-  if (detectQuestionTrack(question) === null) return false;
+  if (detectRequirementTrack(question) === null) return false;
   return /\b(requires?|required|requiring|without|doesn'?t|don'?t|do not|does not|need|needs|must|\bno\b)\b/i.test(
     question,
   );
@@ -998,8 +1013,7 @@ export function requirementShortlist(
   active: ResolvedDeal[],
   question: string,
 ): ResolvedDeal[] {
-  const tokens = tokenize(question);
-  const track = detectTrack(tokens);
+  const track = detectRequirementTrack(question);
   const field = detectFieldOfStudy(question);
   let subset = active;
   if (track) subset = subset.filter((d) => d.track === track);
@@ -1679,6 +1693,16 @@ function hasUnclosedLink(text: string): boolean {
  *  "length". A normally finished reply reports "STOP" / "stop". */
 export function isCutByTokenCap(finishReason: string | undefined): boolean {
   return finishReason === "MAX_TOKENS" || finishReason === "length";
+}
+
+/** Whether a model reply states that nothing in the list matched
+ *  the question ("None of the opportunities in the current list
+ *  match"). Such a reply has no source link to give, so the quality
+ *  gate must not reject it for lacking one. */
+export function isNoMatchReply(reply: string): boolean {
+  return /\b(none of the (opportunities|listings|deals)|no (opportunities|listings|deals|grants|scholarships|jobs) match|doesn'?t (mention|require)|do not (mention|require)|nothing (in the (current )?list )?matches)\b/i.test(
+    reply,
+  );
 }
 
 export function isGoodModelReply(

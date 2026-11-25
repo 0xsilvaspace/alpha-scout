@@ -301,7 +301,7 @@ export default function Chatbot({ signedIn }: { signedIn: boolean }) {
                             type="button"
                             onClick={() => send("show me more")}
                             disabled={busy}
-                            className="ml-2 mt-2 inline-flex items-center gap-1 rounded px-1 py-0.5 text-xs font-medium text-green-800 hover:text-green-900 disabled:opacity-50"
+                            className="mt-2 flex w-full items-center justify-center rounded-md border border-green-800 px-3 py-2 text-sm font-medium text-green-800 hover:bg-green-50 disabled:opacity-50"
                           >
                             Show more
                           </button>

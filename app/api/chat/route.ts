@@ -13,6 +13,7 @@ import {
   countsSummary,
   detectFieldOfStudy,
   detectQuestionTrack,
+  detectRequirementTrack,
   fieldSectionDeals,
   fitReply,
   isBroadQuestion,
@@ -21,6 +22,7 @@ import {
   isGeneralQuestion,
   isGoodModelReply,
   isJudgmentQuestion,
+  isNoMatchReply,
   isRequirementQuestion,
   JUDGMENT_OPEN_FIELD_INSTRUCTION,
   openSectionDeals,
@@ -576,8 +578,13 @@ export async function POST(req: Request) {
   const general = isGeneralQuestion(deals, question);
   // The kind of opportunity the user asked about, if they named one:
   // the shortlist, the instruction and the guarantees all stay inside
-  // it, so a jobs question is never answered with scholarships.
-  const askedTrack = detectQuestionTrack(question);
+  // it, so a jobs question is never answered with scholarships. For
+  // a requirement question the track is read from the head of the
+  // question, before the constraint: the constraint's own words
+  // ("bank account") would otherwise hijack it to another track.
+  const askedTrack = requirement
+    ? detectRequirementTrack(question)
+    : detectQuestionTrack(question);
   const ranked = judgment
     ? rankJudgmentShortlist(deals, question)
     : requirement
@@ -790,8 +797,13 @@ export async function POST(req: Request) {
             r.finishReason,
             // A general answer is plain prose with no opportunity to
             // link, so the gate must not demand a source link or a
-            // 150-character reply for it.
-            general ? { requireLink: false, minLength: 60 } : undefined,
+            // 150-character reply for it. Same for a requirement
+            // answer that states nothing matched: there is no link
+            // to give, and rejecting it would hand back a generic
+            // failure instead of the truthful "none match".
+            general || (requirement && isNoMatchReply(r.reply))
+              ? { requireLink: false, minLength: 60 }
+              : undefined,
           );
           if (gate.ok) {
             raceController.abort();
