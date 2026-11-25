@@ -21,12 +21,14 @@ import {
   isGeneralQuestion,
   isGoodModelReply,
   isJudgmentQuestion,
+  isRequirementQuestion,
   JUDGMENT_OPEN_FIELD_INSTRUCTION,
   openSectionDeals,
   rankDeals,
   rankFitShortlist,
   rankJudgmentShortlist,
   requestedCount,
+  requirementShortlist,
   todayLine,
   TRACK_LABELS,
   trimToCount,
@@ -517,7 +519,15 @@ export async function POST(req: Request) {
     : null;
   const fitShortlist =
     fitField !== null ? rankFitShortlist(deals, question) : null;
-  if (fitShortlist !== null && !isComparisonQuestion(question)) {
+  // A requirement question is never answered from the fit shortlist:
+  // the fit list ignores the requirement, so it would answer as if
+  // it was never asked. It goes to the model, which reads the
+  // requirements and applies it.
+  if (
+    fitShortlist !== null &&
+    !isComparisonQuestion(question) &&
+    !isRequirementQuestion(question)
+  ) {
     const reply = fitReply(
       fitShortlist,
       detectQuestionTrack(question),
@@ -555,6 +565,11 @@ export async function POST(req: Request) {
   // one-example-per-track snapshot: the model can only judge what it
   // is shown.
   const judgment = isJudgmentQuestion(question);
+  // A requirement question no deterministic filter covers reaches the
+  // model: it is judged from the asked track's deals, soonest first,
+  // not from a keyword ranking that would put the listings mentioning
+  // the requirement first.
+  const requirement = isRequirementQuestion(question);
   // General questions ("explain ...", "why is ...", "should I learn
   // German") are not about choosing between deals: the model answers
   // them directly in plain words instead of listing opportunities.
@@ -565,9 +580,11 @@ export async function POST(req: Request) {
   const askedTrack = detectQuestionTrack(question);
   const ranked = judgment
     ? rankJudgmentShortlist(deals, question)
-    : broad
-      ? []
-      : rankDeals(deals, question);
+    : requirement
+      ? requirementShortlist(deals, question)
+      : broad
+        ? []
+        : rankDeals(deals, question);
 
   const systemIntro = [
     "You are Scout, the assistant for Alpha Scout, a site that lists free opportunities open to Nigeria: scholarships, grants, hackathons, competitions, remote jobs and free tools.",
@@ -594,6 +611,16 @@ export async function POST(req: Request) {
           "The ranked sample below is drawn from the same list the counts describe, and earlier answers in this conversation came from that same list, so do not retract or second-guess them when the sample shows only part of the list.",
         ]),
     "Never invent details, values or deadlines. If the list does not contain the answer, say so plainly and suggest checking the official source.",
+    // The user asked for opportunities with a specific requirement.
+    // The deterministic layer has no filter for it, which is why this
+    // reached the model: read the requirement from their question and
+    // apply it to each listing's requirements and eligibility, instead
+    // of listing the soonest-closing ones regardless.
+    ...(requirement
+      ? [
+          `The user asked: "${question}". That question states a requirement. Read each listing's requirements and eligibility in the list below, and recommend only the ones that match what they asked for. If a listing's requirements contradict what they asked, do not recommend it. If none in the list match, say so plainly and suggest checking the site.`,
+        ]
+      : []),
     "Always include the official source link for any opportunity you mention.",
     listLine,
     "Opportunities:",

@@ -205,9 +205,20 @@ export default function Chatbot({ signedIn }: { signedIn: boolean }) {
       setPlayingId(index);
       await audio.play();
     } catch {
+      // A rejected play leaves the button stuck on "Stop" while
+      // nothing plays: clear it, so the next tap tries again.
+      stopAudio();
       setVoiceError("Could not play that reply. Try again.");
     }
   };
+
+  // The latest assistant reply: only it gets a Show more button,
+  // so tapping it always continues the list just shown, never an
+  // older one.
+  const lastAssistantIdx = messages.reduce(
+    (last, m, i) => (m.role === "assistant" ? i : last),
+    -1,
+  );
 
   return (
     <>
@@ -284,6 +295,17 @@ export default function Chatbot({ signedIn }: { signedIn: boolean }) {
                           )}
                           {playingId === i ? "Stop" : "Listen"}
                         </button>
+                        {i === lastAssistantIdx &&
+                        /more after these/i.test(m.content) ? (
+                          <button
+                            type="button"
+                            onClick={() => send("show me more")}
+                            disabled={busy}
+                            className="ml-2 mt-2 inline-flex items-center gap-1 rounded px-1 py-0.5 text-xs font-medium text-green-800 hover:text-green-900 disabled:opacity-50"
+                          >
+                            Show more
+                          </button>
+                        ) : null}
                       </>
                     ) : (
                       m.content

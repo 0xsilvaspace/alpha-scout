@@ -9,6 +9,12 @@ import { stripForSpeech } from "@/lib/voice";
 const DEEPGRAM_SPEAK_URL =
   "https://api.deepgram.com/v1/speak?model=aura-2-thalia-en";
 
+// The function must outlive the Deepgram call: the platform default
+// stops it around 10s, and a cold start plus auth plus synthesis can
+// run past that, killing the call mid-flight with no log and no
+// answer. 60s is the most the Hobby plan allows.
+export const maxDuration = 60;
+
 export async function POST(req: Request) {
   // Signed-in users only, same as /api/chat.
   const supabase = await getServerSupabase();
@@ -91,7 +97,16 @@ export async function POST(req: Request) {
         "Cache-Control": "no-store",
       },
     });
-  } catch {
+  } catch (err) {
+    // Log the cause: the old silent catch hid every failure behind
+    // the same message, so a timed-out Deepgram call and a dead key
+    // looked identical and neither could be fixed.
+    console.error(
+      "[ask-scout] deepgram speak threw",
+      JSON.stringify({
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
     return NextResponse.json(
       { error: "Could not play that reply. Try again." },
       { status: 502 },

@@ -839,6 +839,195 @@ function detectEligibility(question: string): string[] | null {
   return words.length > 0 ? words : null;
 }
 
+/** English-language tests a listing can require: test names plus
+ *  "proof of English" phrasing. Bare "English" is deliberately NOT
+ *  a match: many listings say courses are taught in English without
+ *  asking for a test, and treating that as a requirement would hide
+ *  most of the list. */
+const ENGLISH_TEST_RE =
+  /\b(ielts|toefl|duolingo|toeic|pte academic|cambridge english|english (language )?(test|exam|proficiency|certificate|certification)|proof of english)\b/i;
+
+/** Requirement kinds a list question can filter on. This is the
+ *  general mechanism, not one fix for one question: each kind has
+ *  the words that trigger it in a question, and a test for whether a
+ *  listing requires it, read from its requirements and eligibility.
+ *  A new requirement is one entry here, not a new branch, and it
+ *  works for every track, because the track comes from the question,
+ *  not from the kind. The title is never checked: a title never
+ *  states a requirement. */
+interface RequirementKind {
+  id: string;
+  /** Phrase for the reply header, e.g. "an English test (IELTS, TOEFL or Duolingo)". */
+  label: string;
+  /** The question asks about this kind when it matches. */
+  questionRe: RegExp;
+  /** The listing requires it when this returns true. */
+  dealRequires: (d: ResolvedDeal) => boolean;
+}
+
+const REQUIREMENT_KINDS: RequirementKind[] = [
+  {
+    id: "english-test",
+    label: "an English test (IELTS, TOEFL or Duolingo)",
+    questionRe: ENGLISH_TEST_RE,
+    dealRequires: (d) =>
+      ENGLISH_TEST_RE.test(`${d.requirements} ${d.eligibility}`),
+  },
+  {
+    id: "degree",
+    label: "a degree",
+    // "master's" alone is a level ("master's scholarship"), not a
+    // requirement, so it does not trigger: the question must name
+    // "degree", "bachelor", "PhD", "doctorate" or "diploma".
+    questionRe: /\b(degree|bachelor'?s?|phd|doctorate|diploma)\b/i,
+    dealRequires: (d) =>
+      /\b(degree|bachelor'?s?|master'?s degree|phd|doctorate|diploma)\b/i.test(
+        `${d.requirements} ${d.eligibility}`,
+      ),
+  },
+  {
+    id: "experience",
+    label: "experience",
+    questionRe: /\b(experience|entry[- ]level)\b/i,
+    dealRequires: (d) => {
+      const text = `${d.requirements} ${d.eligibility}`.toLowerCase();
+      // "entry level" and "no experience" in the listing mean
+      // experience is NOT required, so they do not count as
+      // requiring it.
+      if (/\b(entry[- ]level|no experience)\b/.test(text)) return false;
+      return /\bexperience\b/.test(text);
+    },
+  },
+];
+
+/** The direction of a requirement question: "none" for "no IELTS",
+ *  "without Duolingo", "doesn't require a degree"; "required" for
+ *  "which scholarships require IELTS"; null when the question states
+ *  no direction ("what is IELTS"), which is not a filter. The
+ *  negation check runs first, so "doesn't require IELTS" reads as
+ *  "none", not "required". */
+function requirementDirection(
+  question: string,
+): "none" | "required" | null {
+  // Bare "don't"/"doesn't"/"do not"/"not" are in here, not just the
+  // full phrases: "jobs that don't require a degree" must read as
+  // "none", and the old list only had "doesn't require", so "don't
+  // require" fell through to "required".
+  if (
+    /\b(no|without|doesn'?t|don'?t|do not|does not|not|never|waived|waiver|exempt|free of)\b/i.test(
+      question,
+    )
+  ) {
+    return "none";
+  }
+  if (
+    /\b(requires?|required|need|needs|must have|with|accepts?)\b/i.test(
+      question,
+    )
+  ) {
+    return "required";
+  }
+  return null;
+}
+
+/** The requirement kind a question filters on, with its direction,
+ *  or null when it filters on none of the known kinds. A question
+ *  that mentions a kind without a direction is not a filter. */
+export function detectRequirement(
+  question: string,
+): { kind: RequirementKind; mode: "none" | "required" } | null {
+  const mode = requirementDirection(question);
+  if (!mode) return null;
+  for (const kind of REQUIREMENT_KINDS) {
+    if (kind.questionRe.test(question)) return { kind, mode };
+  }
+  return null;
+}
+
+/** The deals matching a requirement question, soonest closing first:
+ *  the detected track when one is named, the named field when one
+ *  is, and the requirement filter itself. Returns null when the
+ *  question is not a requirement question for a known kind. A
+ *  listing counts as not requiring something when neither its
+ *  requirements nor its eligibility mentions it. */
+export function requirementSubset(
+  active: ResolvedDeal[],
+  question: string,
+): { deals: ResolvedDeal[]; kind: RequirementKind; mode: "none" | "required" } | null {
+  const found = detectRequirement(question);
+  if (!found) return null;
+  const tokens = tokenize(question);
+  const track = detectTrack(tokens);
+  const field = detectFieldOfStudy(question);
+  let subset = active.filter((d) =>
+    found.mode === "none" ? !found.kind.dealRequires(d) : found.kind.dealRequires(d),
+  );
+  if (track) subset = subset.filter((d) => d.track === track);
+  if (field) subset = subset.filter((d) => fieldListFits(d, field));
+  return {
+    deals: [...subset].sort(bySoonest),
+    kind: found.kind,
+    mode: found.mode,
+  };
+}
+
+/** Whether a question is a list question with a requirement
+ *  constraint ("jobs that don't require a degree", "grants without
+ *  a bank account"). This is the broad detector the fallback uses:
+ *  it fires for requirement words even when no known kind matches,
+ *  so a question about a requirement Scout has no filter for still
+ *  does not get a generic track list. Count questions are not list
+ *  questions, and a question with no track has no list to filter. */
+export function isRequirementQuestion(question: string): boolean {
+  if (/\bhow many\b/i.test(question)) return false;
+  if (detectQuestionTrack(question) === null) return false;
+  return /\b(requires?|required|requiring|without|doesn'?t|don'?t|do not|does not|need|needs|must|\bno\b)\b/i.test(
+    question,
+  );
+}
+
+/** The representative sample a requirement question is judged from
+ *  when no deterministic filter covers it: the asked track's deals
+ *  (the named field's, when one is named), soonest closing first.
+ *  The model reads each listing's requirements from this sample and
+ *  applies the question's requirement itself, so the sample is
+ *  deliberately not keyword-ranked: ranking by the requirement's
+ *  words would put the listings that mention it first, which is the
+ *  wrong end for a "no X" question. */
+export function requirementShortlist(
+  active: ResolvedDeal[],
+  question: string,
+): ResolvedDeal[] {
+  const tokens = tokenize(question);
+  const track = detectTrack(tokens);
+  const field = detectFieldOfStudy(question);
+  let subset = active;
+  if (track) subset = subset.filter((d) => d.track === track);
+  if (field) subset = subset.filter((d) => fieldListFits(d, field));
+  return [...subset].sort(bySoonest);
+}
+
+/** A list question with a requirement constraint ("jobs that don't
+ *  require a degree", "grants without a bank account"). The
+ *  single-deal branches must not answer these: the question asks for
+ *  a list, not for the one deal whose title happens to contain the
+ *  requirement word ("Bachelor's or Master's degree" in a job
+ *  title). A question about one named deal ("does the Turing
+ *  Statistics Trainer require a degree?") names no list, so it
+ *  still goes to the single-deal branches. */
+function isRequirementListQuestion(question: string): boolean {
+  if (
+    detectRequirement(question) === null &&
+    !isRequirementQuestion(question)
+  ) {
+    return false;
+  }
+  if (/\b(list|show|find|give|bring|get)\b/i.test(question)) return true;
+  return /\b(scholarships|grants|internships|hackathons|competitions|jobs|tools|tokens|nfts|opportunities|deals)\b/i.test(
+    question,
+  );
+}
+
 function detectTrack(tokens: string[]): DisplayTrack | null {
   let best: DisplayTrack | null = null;
   let bestHits = 0;
@@ -885,13 +1074,30 @@ function countLabel(track: DisplayTrack | null, n: number): string {
 }
 
 /** Header plus numbered deal items, with a blank line between items
- *  so each one reads as its own entry. The default is 5; a question
- *  that asks for a specific number passes its count as the limit. */
-function listReply(header: string, items: ResolvedDeal[], limit = 5): string {
+ *  so each one reads as its own entry. The default is 10; a question
+ *  that asks for a specific number passes its count as the limit.
+ *  When more items match than are shown, the reply says how many
+ *  and how to see them, so a "167 in total" header followed by 10
+ *  items never reads as the whole list. An exact count ("top 3")
+ *  suppresses that line: the contract is exactly that many and
+ *  nothing about the total. */
+function listReply(
+  header: string,
+  items: ResolvedDeal[],
+  limit = 10,
+  exact = false,
+): string {
   const lines = [header, ""];
-  items.slice(0, limit).forEach((d, i) => {
+  const shown = items.slice(0, limit);
+  shown.forEach((d, i) => {
     lines.push(dealItem(d, i + 1), "");
   });
+  const rest = items.length - shown.length;
+  if (rest > 0 && !exact) {
+    lines.push(
+      `There ${rest === 1 ? "is" : "are"} ${rest} more after these. Ask "show me more" to see them.`,
+    );
+  }
   return lines.join("\n").trimEnd();
 }
 
@@ -1098,14 +1304,18 @@ export function tryDeterministic(
     }
   }
 
-  // 2. One field of a confidently matched deal.
+  // 2. One field of a confidently matched deal. A requirement list
+  // question is not a question about one deal, even when one deal's
+  // title contains the requirement word.
   const field = detectField(question);
-  if (field && strong && top) {
+  if (field && strong && top && !isRequirementListQuestion(question)) {
     return { type: `deal-${field}`, reply: fieldReply(top.d, field) };
   }
 
-  // 3. Full brief of a confidently matched deal.
-  if (strong && top) {
+  // 3. Full brief of a confidently matched deal. Same guard as
+  // branch 2: a requirement list question is answered by the
+  // requirement filter, not by one deal's brief.
+  if (strong && top && !isRequirementListQuestion(question)) {
     return { type: "deal-brief", reply: singleDealReply(top.d) };
   }
 
@@ -1161,7 +1371,7 @@ export function tryDeterministic(
             ? `Here are the top ${n} ${pluralLabel(track)}${field ? ` for ${field}` : ""} closing ${window.label}:`
             : `${label}${field ? ` for ${field}` : ""} close${subset.length === 1 ? "s" : ""} ${window.label}:`,
           [...subset].sort(bySoonest),
-          n ?? 5,
+          n ?? 10, n !== null,
         ),
       };
     }
@@ -1194,7 +1404,7 @@ export function tryDeterministic(
             ? `Here are the top ${n} ${pluralLabel(track)} (${cost.label}):`
             : `${oppCount(subset.length)} ${isAre(subset.length)} ${cost.label}${track ? ` in ${TRACK_LABELS[track] ?? track}` : ""}, soonest closing first:`,
           [...subset].sort(bySoonest),
-          n ?? 5,
+          n ?? 10, n !== null,
         ),
       };
     }
@@ -1229,10 +1439,62 @@ export function tryDeterministic(
             ? `Here are the top ${n} ${pluralLabel(track)} matching "${eligWords.join(" ")}":`
             : `${oppCount(anyMatch.length)} match${anyMatch.length === 1 ? "es" : ""} "${eligWords.join(" ")}"${track ? ` in ${TRACK_LABELS[track] ?? track}` : ""}:`,
           [...anyMatch].sort(bySoonest),
-          n ?? 5,
+          n ?? 10, n !== null,
         ),
       };
     }
+  }
+
+  // 8b. Requirement filter ("no IELTS", "without Duolingo", "jobs
+  // that don't require a degree", "which scholarships require
+  // IELTS"). Without this branch the question falls through to the
+  // plain track list, which ignores the requirement entirely and
+  // answers with the soonest-closing listings whether or not they
+  // need what was asked about. The kinds live in
+  // REQUIREMENT_KINDS, so this works for every track and every kind
+  // in the table, not for one question.
+  const requirement = requirementSubset(active, question);
+  if (requirement) {
+    const track = detectTrack(tokens);
+    const { deals, kind, mode } = requirement;
+    if (deals.length > 0) {
+      const n = requestedCount(question);
+      const header =
+        mode === "none"
+          ? `${countLabel(track, deals.length)} don't mention ${kind.label} in their requirements, soonest closing first:`
+          : `${countLabel(track, deals.length)} mention ${kind.label} in their requirements, soonest closing first:`;
+      // A listing can be silent about a requirement the university
+      // still asks for, so the requirement-free answer says that
+      // plainly instead of promising it is not needed.
+      const caveat =
+        mode === "none"
+          ? `\n\nThese listings don't mention ${kind.label}, but a listing can be silent about a requirement. Confirm on the official page before applying.`
+          : "";
+      return {
+        type: "filter-requirement",
+        reply: listReply(header, deals, n ?? 10, n !== null) + caveat,
+      };
+    }
+    const noun = track
+      ? singularLabel(TRACK_LABELS[track] ?? track)
+      : "listing";
+    return {
+      type: "filter-requirement-absent",
+      reply:
+        mode === "none"
+          ? `Every ${noun} on the site mentions ${kind.label} in its requirements.`
+          : `No ${track ? pluralLabel(track) : "listings"} on the site mention ${kind.label} in their requirements.`,
+    };
+  }
+
+  // 8c. A list question with a requirement constraint that no branch
+  // above covers ("grants that don't require a bank account") must
+  // NOT fall through to the plain track list: that list ignores the
+  // requirement and answers as if it was never asked. Return null so
+  // the route sends it to the model, which reads the listings'
+  // requirements and applies the constraint itself.
+  if (isRequirementQuestion(question)) {
+    return null;
   }
 
   // 9. Deals closing in the next 14 days.
@@ -1256,7 +1518,7 @@ export function tryDeterministic(
         reply: listReply(
           n ? `Here are the top ${n} ${pluralLabel(track)}${field ? ` for ${field}` : ""} closing soon:` : `${label}${field ? ` for ${field}` : ""}:`,
           closing,
-          n ?? 5,
+          n ?? 10, n !== null,
         ),
       };
     }
@@ -1306,7 +1568,7 @@ export function tryDeterministic(
               : `The ${n} biggest prizes on the site:`
             : "The biggest prizes on the site:",
           valued,
-          n ?? 5,
+          n ?? 10, n !== null,
         ),
       };
     }
@@ -1332,7 +1594,7 @@ export function tryDeterministic(
               ? `Here are the top ${n} ${pluralLabel(track)} for ${field}:`
               : `${countLabel(track, fitted.length)} mention ${field}, soonest closing first:`,
             fitted,
-            n ?? 5,
+            n ?? 10, n !== null,
           ),
         };
       }
@@ -1350,7 +1612,7 @@ export function tryDeterministic(
             ? `Here are the top ${n} ${pluralLabel(track)}:`
             : `${countLabel(track, inTrack.length)} in total, soonest closing first:`,
           inTrack,
-          n ?? 5,
+          n ?? 10, n !== null,
         ),
       };
     }
@@ -1370,7 +1632,7 @@ export function tryDeterministic(
     if (field) {
       matched = matched.filter((s) => fieldListFits(s.d, field));
     }
-    matched = matched.slice(0, requestedCount(question) ?? 5);
+    matched = matched.slice(0, requestedCount(question) ?? 10);
     if (matched.length === 0) return null;
     return {
       type: "filter-keywords",
@@ -2367,12 +2629,23 @@ export function tryShowMore(
   if (askedTrack && prevTrack && askedTrack !== prevTrack) return null;
 
   const active = activeDeals(deals);
-  const candidates =
-    isFitQuestion(prevQuestion) && detectFieldOfStudy(prevQuestion)
-      ? rankFitShortlist(active, prevQuestion).all
-      : isJudgmentQuestion(prevQuestion)
-        ? rankJudgmentShortlist(active, prevQuestion)
-        : rankDeals(active, prevQuestion);
+  // A requirement question ("no IELTS", "no degree") must continue
+  // the same filtered list, soonest first: rankDeals would re-rank
+  // by the question's keywords, and "ielts" as a keyword ranks the
+  // deals that MENTION a test first, the opposite of what was asked.
+  // A requirement question the model answered (no known kind) has no
+  // filter to continue, so it continues the same representative
+  // sample the model judged from, soonest first.
+  const requirement = requirementSubset(active, prevQuestion);
+  const candidates = requirement
+    ? requirement.deals
+    : isRequirementQuestion(prevQuestion)
+      ? requirementShortlist(active, prevQuestion)
+      : isFitQuestion(prevQuestion) && detectFieldOfStudy(prevQuestion)
+        ? rankFitShortlist(active, prevQuestion).all
+        : isJudgmentQuestion(prevQuestion)
+          ? rankJudgmentShortlist(active, prevQuestion)
+          : rankDeals(active, prevQuestion);
   const inScope = askedTrack
     ? candidates.filter((d) => d.track === askedTrack)
     : candidates;
@@ -2387,7 +2660,7 @@ export function tryShowMore(
       reply: `That was all of them. There are no more ${label} on the site that match.`,
     };
   }
-  const shown = remaining.slice(0, requestedCount(prevQuestion) ?? 5);
+  const shown = remaining.slice(0, requestedCount(prevQuestion) ?? 10);
   const reply = listReply(
     `Here are ${shown.length} more ${label}:`,
     shown,
