@@ -601,10 +601,21 @@ export async function POST(req: Request) {
   ];
   const listLine = count
     ? `Format every answer like this: one short opening line, then a numbered list of exactly ${count} opportunities. Number each item (1., 2., 3., ...) and put a blank line before each number, so the items are clearly separated. Each item is four lines: the title on its own line in **bold**, one short line saying what it offers, one line with the closing date (for example 'Closes 16 November 2026 (in 3 days)'), then the official source link on its own line as [Official source](url). Never put the closing date inside the description sentence, never print a raw URL, and never use bold anywhere except the title line. Keep every answer under 250 words.`
-    : "Format every answer like this: one short opening line, then a numbered list of at most 5 opportunities. Number each item (1., 2., 3., ...) and put a blank line before each number, so the items are clearly separated. Each item is four lines: the title on its own line in **bold**, one short line saying what it offers, one line with the closing date (for example 'Closes 16 November 2026 (in 3 days)'), then the official source link on its own line as [Official source](url). Never put the closing date inside the description sentence, never print a raw URL, and never use bold anywhere except the title line. Keep every answer under 250 words.";
+    : requirement
+      ? "Format every answer like this: one short opening line, then a numbered list of at most 10 opportunities that match the requirement. Number each item (1., 2., 3., ...) and put a blank line before each number, so the items are clearly separated. Each item is four lines: the title on its own line in **bold**, one short line saying what it offers, one line with the closing date (for example 'Closes 16 November 2026 (in 3 days)'), then the official source link on its own line as [Official source](url). Never put the closing date inside the description sentence, never print a raw URL, and never use bold anywhere except the title line. Keep every answer under 250 words. Do not report totals or counts; list the matching opportunities."
+      : "Format every answer like this: one short opening line, then a numbered list of at most 5 opportunities. Number each item (1., 2., 3., ...) and put a blank line before each number, so the items are clearly separated. Each item is four lines: the title on its own line in **bold**, one short line saying what it offers, one line with the closing date (for example 'Closes 16 November 2026 (in 3 days)'), then the official source link on its own line as [Official source](url). Never put the closing date inside the description sentence, never print a raw URL, and never use bold anywhere except the title line. Keep every answer under 250 words.";
   const systemSpecific = [
     ...systemIntro,
-    "When the user asks about the whole list, use the counts line above the list to report the totals, and summarize by category instead of listing every item one by one. The list below is only a sample of the full list, ranked for this question.",
+    // A requirement question is answered by listing the matching
+    // opportunities, not by reporting totals: the counts line
+    // ("Alpha Scout has 590 opportunities...") pulled the small
+    // model into answering with a count summary instead of a list,
+    // so it is left out of the prompt for these questions entirely.
+    ...(requirement
+      ? []
+      : [
+          "When the user asks about the whole list, use the counts line above the list to report the totals, and summarize by category instead of listing every item one by one. The list below is only a sample of the full list, ranked for this question.",
+        ]),
     ...(judgment
       ? [
           "The shortlist below is split into two sections: 'Field-specific fits' and 'Open to all disciplines, any graduate can apply'. Judge only what is shown. Do not claim a listing is absent or a field is uncovered when it is not in the shortlist; if the shortlist does not cover the question, say so and suggest checking the site.",
@@ -666,7 +677,11 @@ export async function POST(req: Request) {
     const snapshot = judgment
       ? buildJudgmentSnapshot(ranked, maxChars)
       : buildSnapshot(ranked, maxChars);
-    return `${systemSpecific}\n${countsSummary(deals)}\n${snapshot}`;
+    // A requirement question gets no counts line: the totals pulled
+    // the small model into a count summary instead of a list.
+    return requirement
+      ? `${systemSpecific}\n${snapshot}`
+      : `${systemSpecific}\n${countsSummary(deals)}\n${snapshot}`;
   };
 
   const fail = () => {

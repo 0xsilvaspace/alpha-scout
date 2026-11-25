@@ -898,6 +898,18 @@ const REQUIREMENT_KINDS: RequirementKind[] = [
       return /\bexperience\b/.test(text);
     },
   },
+  {
+    id: "bank-account",
+    label: "a bank account",
+    // "bank" alone is a track word (banking products), not a
+    // requirement, so the question must name the full phrase
+    // "bank account" (or "bank details").
+    questionRe: /\b(bank account|bank details|banking details)\b/i,
+    dealRequires: (d) =>
+      /\b(bank account|bank details|banking details)\b/i.test(
+        `${d.requirements} ${d.eligibility}`,
+      ),
+  },
 ];
 
 /** The direction of a requirement question: "none" for "no IELTS",
@@ -1469,7 +1481,10 @@ export function tryDeterministic(
   // in the table, not for one question.
   const requirement = requirementSubset(active, question);
   if (requirement) {
-    const track = detectTrack(tokens);
+    // The label uses the same head-of-question track as the filter:
+    // the full-question track would call "grants that don't require
+    // a bank account" banking, while the list itself is grants.
+    const track = detectRequirementTrack(question);
     const { deals, kind, mode } = requirement;
     if (deals.length > 0) {
       const n = requestedCount(question);
@@ -1502,7 +1517,7 @@ export function tryDeterministic(
   }
 
   // 8c. A list question with a requirement constraint that no branch
-  // above covers ("grants that don't require a bank account") must
+  // above covers ("grants that don't require a passport") must
   // NOT fall through to the plain track list: that list ignores the
   // requirement and answers as if it was never asked. Return null so
   // the route sends it to the model, which reads the listings'
@@ -2613,7 +2628,7 @@ export interface ChatTurn {
 
 /** The deals a "show more" follow-up should list: the ranked
  *  candidates for the previous question, minus the ones the previous
- *  reply already named. Returns null when the message is not a
+ *  replies already showed. Returns null when the message is not a
  *  follow-up, when there is no previous answer to continue from, or
  *  when the follow-up names a different kind than the previous
  *  question (that is a fresh question, answered by the normal flow). */
@@ -2645,8 +2660,31 @@ export function tryShowMore(
     }
   }
   if (prevUserIdx < 0) return null;
-  const prevQuestion = messages[prevUserIdx].content;
-  const prevReply = messages[prevAssistantIdx].content;
+  // The original question: walk back past any earlier "show me more"
+  // turns, which continue the same list. Without this, a second
+  // "show me more" would derive its candidates from "show me more"
+  // itself, which names no track, field or requirement.
+  let originalUserIdx = prevUserIdx;
+  while (SHOW_MORE_RE.test(messages[originalUserIdx].content)) {
+    let a = -1;
+    for (let i = originalUserIdx - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") {
+        a = i;
+        break;
+      }
+    }
+    if (a < 0) return null;
+    let u = -1;
+    for (let i = a - 1; i >= 0; i--) {
+      if (messages[i].role === "user") {
+        u = i;
+        break;
+      }
+    }
+    if (u < 0) return null;
+    originalUserIdx = u;
+  }
+  const prevQuestion = messages[originalUserIdx].content;
 
   const askedTrack = detectQuestionTrack(current.content);
   const prevTrack = detectQuestionTrack(prevQuestion);
@@ -2673,7 +2711,36 @@ export function tryShowMore(
   const inScope = askedTrack
     ? candidates.filter((d) => d.track === askedTrack)
     : candidates;
-  const remaining = inScope.filter((d) => !dealNamedInReply(prevReply, d));
+  // How many items the chain has already shown: count the numbered
+  // items in every assistant reply since the original question.
+  // When the original question was answered deterministically, its
+  // items are the first N candidates in order, so the remaining list
+  // is an exact slice by that count. Detecting shown deals by title
+  // words instead loses near-duplicates: "St Leonard's Masters"
+  // (February) shares its key words with the January one already
+  // shown, so it was dropped and the remaining count came out 5
+  // short (142 instead of 147). A model-answered chain has no
+  // deterministic order to slice by, so it still uses title-word
+  // matching against all the previous replies.
+  const deterministicChain =
+    tryDeterministic(deals, prevQuestion) !== null ||
+    isFitQuestion(prevQuestion);
+  let remaining: ResolvedDeal[];
+  if (deterministicChain) {
+    let shownCount = 0;
+    for (let i = originalUserIdx + 1; i <= prevAssistantIdx; i++) {
+      if (messages[i].role !== "assistant") continue;
+      shownCount += (messages[i].content.match(/^\d+\. /gm) ?? []).length;
+    }
+    remaining = inScope.slice(shownCount);
+  } else {
+    const prevReplies = messages
+      .slice(originalUserIdx + 1, prevAssistantIdx + 1)
+      .filter((m) => m.role === "assistant")
+      .map((m) => m.content)
+      .join("\n");
+    remaining = inScope.filter((d) => !dealNamedInReply(prevReplies, d));
+  }
   const labelTrack = askedTrack ?? prevTrack ?? remaining[0]?.track ?? null;
   const label = labelTrack
     ? (TRACK_LABELS[labelTrack] ?? labelTrack)
