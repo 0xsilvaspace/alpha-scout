@@ -17,6 +17,7 @@ import {
   HandCoins,
   LayoutGrid,
   Medal,
+  Timer,
   Trophy,
 } from "lucide-react";
 import {
@@ -663,8 +664,11 @@ export default function Home() {
               </a>
             </div>
             <p className="mt-4 text-sm text-stone-500">
-              {activeDeals.length} active opportunities · {expiringCount}{" "}
-              closing soon
+              {activeDeals.length} active opportunities ·{" "}
+              <span className="inline-flex items-center gap-1 font-semibold text-red-700">
+                <Timer className="h-3.5 w-3.5" />
+                {expiringCount} closing soon
+              </span>
             </p>
           </div>
           <div>
@@ -798,7 +802,6 @@ export default function Home() {
                     <DealCard
                       key={deal.id}
                       deal={deal}
-                      lastSync={lastSync}
                       saved={savedIds.includes(deal.id)}
                       onToggleSave={() => toggleSave(deal)}
                     />
@@ -820,7 +823,6 @@ export default function Home() {
                       <DealCard
                         key={deal.id}
                         deal={deal}
-                        lastSync={lastSync}
                         saved
                         onToggleSave={() => toggleSave(deal)}
                       />

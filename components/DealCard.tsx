@@ -12,6 +12,7 @@ import {
   Flag,
   ShieldAlert,
   ShieldCheck,
+  Timer,
 } from "lucide-react";
 import {
   daysLeft,
@@ -35,13 +36,20 @@ interface DealCardProps {
   saved?: boolean;
   /** Toggles the saved state for this deal. */
   onToggleSave?: () => void;
-  /** Feed last-sync time (e.g. "12 Nov 2026, 12:48"), shown on grant
-   * cards as the time their source was last checked. This is the feed's
-   * sync time, not a per-URL live check. */
-  lastSync?: string;
 }
 
-export default function DealCard({ deal, lastSync, saved = false, onToggleSave }: DealCardProps) {
+/** "2026-11-27" -> "27 Nov 2026". */
+function formatDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export default function DealCard({ deal, saved = false, onToggleSave }: DealCardProps) {
   const [open, setOpen] = useState(false);
   const [reported, setReported] = useState(false);
   // Feed text can contain em dashes; render them as commas instead.
@@ -66,15 +74,6 @@ export default function DealCard({ deal, lastSync, saved = false, onToggleSave }
   // Risk notes come from the feed; a leading "URGENT:" marker is display
   // noise, so it is softened at render time without changing the data.
   const riskNote = clean(deal.riskNote.replace(/^URGENT:\s*/i, ""));
-  // Every card shows where the listing comes from, so the source is
-  // always visible and vetted status is never hidden.
-  const sourceHost = (() => {
-    try {
-      return new URL(deal.sourceUrl).hostname.replace(/^www\./, "");
-    } catch {
-      return deal.sourceUrl;
-    }
-  })();
   const trackBadge =
     deal.track === "grants"
       ? `Grants · ${GRANT_KIND_LABELS[deal.grantKind ?? "other"]}`
@@ -84,24 +83,36 @@ export default function DealCard({ deal, lastSync, saved = false, onToggleSave }
           ? `Competitions · ${COMPETITION_KIND_LABELS[deal.competitionKind ?? "other"]}`
           : DISPLAY_LABELS[deal.track];
 
+  // Closing date, always with the actual date and the days left, so a
+  // reader can judge it without opening the official source.
   const expiryText =
     dLeft === null
-      ? "Ongoing"
+      ? "Closes: Rolling / ongoing"
       : dLeft < 0
-        ? `Closed ${Math.abs(dLeft)}d ago`
+        ? `Closed ${formatDate(deal.expiresOn ?? "")} · ${Math.abs(dLeft)}d ago`
         : dLeft === 0
-          ? "Closes today"
-          : deal.expiresOn
-            ? `Closes ${deal.expiresOn}`
-            : dLeft === 1
-              ? "Closes in 1 day"
-              : `Closes in ${dLeft} days`;
+          ? `Closes: ${formatDate(deal.expiresOn ?? "")} · today`
+          : dLeft === 1
+            ? `Closes: ${formatDate(deal.expiresOn ?? "")} · in 1 day`
+            : `Closes: ${formatDate(deal.expiresOn ?? "")} · in ${dLeft} days`;
+
+  // Option C (Kenneth, 2026-11-26): the card body is a short Summary
+  // of three bullets, built from the fields the feed already carries,
+  // so no per-deal summary has to be written. Value and closing date
+  // stay as their own lines above it. The per-card "Source checked"
+  // line and the separate "Source" hostname line are gone; the only
+  // last-updated time is the feed-level one at the top of the page.
+  const summaryBullets = [
+    estimatedValue,
+    eligibility,
+    requirements,
+  ].filter(Boolean);
 
   return (
     <article
       className={
         "flex flex-col rounded-lg border bg-white p-4 shadow-sm transition-shadow hover:shadow-md " +
-        (closingSoon ? "border-amber-300" : "border-stone-200")
+        (closingSoon ? "border-red-300" : "border-stone-200")
       }
     >
       <div className="flex flex-wrap items-center gap-1.5">
@@ -185,63 +196,48 @@ export default function DealCard({ deal, lastSync, saved = false, onToggleSave }
           </span>
           <span className="font-semibold text-stone-900">
             {deal.valueUsd !== null ? formatUsd(deal.valueUsd) : "Not stated"}
-          </span>{" "}
-          <span className="text-stone-500">{estimatedValue}</span>
-        </p>
-        <p className="text-stone-600">
-          <span className="text-xs font-medium text-stone-500">
-            Eligibility ·{" "}
           </span>
-          {eligibility}
         </p>
-        {deal.track === "grants" ? (
-          <p className="text-stone-600">
-            <span className="text-xs font-medium text-stone-500">
-              Funded by ·{" "}
-            </span>
-            <span className="font-semibold text-stone-900">{funder}</span>
-          </p>
-        ) : null}
-        <p className="text-stone-600">
-          <span className="text-xs font-medium text-stone-500">
-            Source ·{" "}
-          </span>
-          {sourceHost}
-        </p>
-        {lastSync ? (
-          <p className="text-xs text-stone-500">
-            Source checked {lastSync}
-            {deal.verification === "verified"
-              ? " · vetted against the official page"
-              : " · not yet vetted, check the official page before applying"}
-          </p>
-        ) : null}
         <p
           className={
-            "flex items-center gap-1.5 text-xs " +
-            (closingSoon ? "font-semibold text-amber-800" : "text-stone-500")
+            "flex items-center gap-1.5 text-[13px] " +
+            (closingSoon
+              ? "font-semibold text-red-700"
+              : dLeft === null
+                ? "text-stone-500"
+                : "font-medium text-amber-800")
           }
         >
           {closingSoon ? (
-            <Clock className="h-3.5 w-3.5" />
+            <Timer className="h-3.5 w-3.5 shrink-0" />
           ) : (
-            <CalendarClock className="h-3.5 w-3.5" />
+            <CalendarClock className="h-3.5 w-3.5 shrink-0" />
           )}
           {expiryText}
         </p>
-        <p className="text-stone-600">
-          <span className="text-xs font-medium text-stone-500">
-            Requirements ·{" "}
-          </span>
-          {requirements}
-        </p>
-        {riskNote ? (
-          <p className="flex items-start gap-1.5 rounded border border-stone-200 bg-stone-50 p-2 text-xs text-stone-600">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-700" />
-            <span>{riskNote}</span>
-          </p>
-        ) : null}
       </div>
+
+      <div className="mt-3 rounded-r-lg border-l-[3px] border-green-800 bg-stone-50 p-3">
+        <p className="text-xs font-semibold text-stone-900">Summary</p>
+        <ul className="mt-1.5 list-disc space-y-1.5 pl-4 text-[13px] leading-relaxed text-stone-600">
+          {summaryBullets.map((bullet, i) => (
+            <li key={i}>{bullet}</li>
+          ))}
+          {deal.track === "grants" ? <li>Funded by {funder}.</li> : null}
+        </ul>
+      </div>
+
+      {riskNote ? (
+        <p className="mt-3 flex items-start gap-1.5 rounded border border-stone-200 bg-stone-50 p-2 text-xs text-stone-600">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-700" />
+          <span>
+            <span className="font-semibold text-stone-700">
+              Before you apply:{" "}
+            </span>
+            {riskNote}
+          </span>
+        </p>
+      ) : null}
 
       <div className="mt-3">
         <button
@@ -250,7 +246,7 @@ export default function DealCard({ deal, lastSync, saved = false, onToggleSave }
           aria-expanded={open}
           className="flex w-full items-center justify-between rounded border border-stone-200 bg-stone-50 px-3 py-2 text-xs font-medium text-stone-700 hover:border-stone-300"
         >
-          <span>Steps ({steps.length})</span>
+          <span>How to apply ({steps.length} steps)</span>
           <ChevronDown
             className={"h-4 w-4 transition-transform " + (open ? "rotate-180" : "")}
           />

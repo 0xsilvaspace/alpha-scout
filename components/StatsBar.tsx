@@ -1,3 +1,5 @@
+import { Timer } from "lucide-react";
+
 interface StatsBarProps {
   activeCount: number;
   expiringCount: number;
@@ -28,9 +30,12 @@ export default function StatsBar({
         </div>
       </div>
 
-      <div className="rounded-lg border border-stone-200 bg-white p-4">
-        <div className="text-xs font-medium text-stone-500">Closing soon</div>
-        <div className="mt-1 text-3xl font-semibold text-stone-900">
+      <div className="rounded-lg border border-red-300 border-l-4 border-l-red-600 bg-red-50 p-4">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-red-700">
+          <Timer className="h-3.5 w-3.5" />
+          Closing soon
+        </div>
+        <div className="mt-1 text-3xl font-semibold text-red-700">
           {expiringCount}
         </div>
         <div className="mt-1 text-xs text-stone-500">
