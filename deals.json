@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-11-26T00:02:59.952Z",
-  "count": 629,
+  "generatedAt": "2026-11-26T14:48:05.135Z",
+  "count": 625,
   "deals": [
     {
       "id": 7,
@@ -3667,22 +3667,6 @@
       "status": "active"
     },
     {
-      "id": 516,
-      "title": "Erasmus Mundus EDISS Scholarship 2027 - Data-intensive Intelligent Software Systems (Fully Funded)",
-      "track": "scholarships",
-      "estimatedValue": "Fully funded Erasmus Mundus Master's (EDISS)",
-      "valueUsd": 60000,
-      "eligibility": "International applicants including Nigeria; Erasmus Mundus",
-      "costType": "truly-free",
-      "expiresOn": "2027-01-12",
-      "sourceUrl": "https://www.ushirezone.com/opportunity/erasmus-mundus-ediss-scholarship-2027",
-      "requirements": "Bachelor's in CS/software; EDISS application",
-      "actionSteps": "1. Open the roundup. 2. Follow to EDISS official application. 3. Apply before 12 Jan 2027.",
-      "verification": "pending",
-      "riskNote": "Source is a roundup; confirm deadline on EDISS official site.",
-      "status": "active"
-    },
-    {
       "id": 517,
       "title": "Turing - Image/Video Annotator, Remote",
       "track": "jobs",
@@ -5267,22 +5251,6 @@
       "status": "active"
     },
     {
-      "id": 725,
-      "title": "Erasmus Mundus CLMCE Scholarship 2027 - Fully Funded Master's in Children's Literature, Media and Cultural Entrepreneurship",
-      "track": "scholarships",
-      "estimatedValue": "Fully funded Erasmus Mundus Master's (CLMCE)",
-      "valueUsd": 39000,
-      "eligibility": "International applicants including Nigeria; Erasmus Mundus",
-      "costType": "truly-free",
-      "expiresOn": "2027-01-22",
-      "sourceUrl": "https://www.scholarshipsads.com/erasmus-mundus-clmce-scholarship-in-europe",
-      "requirements": "Bachelor's degree; CLMCE application",
-      "actionSteps": "1. Open the roundup. 2. Follow to CLMCE official application. 3. Apply before 22 Jan 2027.",
-      "verification": "pending",
-      "riskNote": "Source is a roundup; confirm deadline on CLMCE official site.",
-      "status": "active"
-    },
-    {
       "id": 726,
       "title": "Mundus MAPP Erasmus Mundus Scholarship 2027–2029",
       "track": "scholarships",
@@ -5312,22 +5280,6 @@
       "actionSteps": "1. Open the KFUPM graduate admissions portal (CGIS Apply page). 2. Choose a thesis-based MS or PhD programme. 3. Enter referees early so letters arrive. 4. Submit by 15 December 2026.",
       "verification": "pending",
       "riskNote": "This deadline is for thesis-based MS/PhD only. Project-based MS has a separate window (3 Jan–10 Feb 2027) and is not automatically fully funded. Do not confuse the two.",
-      "status": "active"
-    },
-    {
-      "id": 729,
-      "title": "Erasmus Mundus GrEnFIn 2027-2029 - Greening Energy Market and Finance",
-      "track": "scholarships",
-      "estimatedValue": "Fully funded Erasmus Mundus Master's (GrEnFIn)",
-      "valueUsd": 39000,
-      "eligibility": "International applicants including Nigeria; Erasmus Mundus",
-      "costType": "truly-free",
-      "expiresOn": "2027-01-07",
-      "sourceUrl": "https://sitiwebondemand.unibo.it/grenfin-emjm/en",
-      "requirements": "Bachelor's in economics/finance; GrEnFIn application",
-      "actionSteps": "1. Open the GrEnFIn page. 2. Check eligibility. 3. Apply before 7 Jan 2027.",
-      "verification": "verified",
-      "riskNote": "",
       "status": "active"
     },
     {
@@ -6611,38 +6563,6 @@
       "status": "active"
     },
     {
-      "id": 824,
-      "title": "Erasmus Mundus GroundwatCH Scholarship 2027 - Groundwater and Global Change",
-      "track": "scholarships",
-      "estimatedValue": "Fully funded Erasmus Mundus Master's (GroundwatCH)",
-      "valueUsd": 39000,
-      "eligibility": "International applicants including Nigeria; Erasmus Mundus",
-      "costType": "truly-free",
-      "expiresOn": "2027-01-03",
-      "sourceUrl": "https://scholarshipauditor.com/erasmus-mundus-scholarship-nigeria-ghana/",
-      "requirements": "Bachelor's in relevant field; GroundwatCH application",
-      "actionSteps": "1. Open the roundup. 2. Follow to GroundwatCH official application. 3. Apply before 3 Jan 2027.",
-      "verification": "pending",
-      "riskNote": "Source is a roundup; confirm deadline on GroundwatCH official site.",
-      "status": "active"
-    },
-    {
-      "id": 825,
-      "title": "Erasmus Mundus GLOCAL Scholarship 2027 - Global Markets, Local Creativities",
-      "track": "scholarships",
-      "estimatedValue": "Fully funded Erasmus Mundus Master's (GLOCAL)",
-      "valueUsd": 39000,
-      "eligibility": "International applicants including Nigeria; Erasmus Mundus",
-      "costType": "truly-free",
-      "expiresOn": "2027-01-14",
-      "sourceUrl": "https://www.studyabroadwitharbaz.com/p/erasmus-mundus-2027-every-program.html",
-      "requirements": "Bachelor's degree; GLOCAL application",
-      "actionSteps": "1. Open the roundup. 2. Follow to GLOCAL official application. 3. Apply before 14 Jan 2027.",
-      "verification": "pending",
-      "riskNote": "Source is a roundup; confirm deadline on GLOCAL official site.",
-      "status": "active"
-    },
-    {
       "id": 826,
       "title": "Aura Protocol Airdrop ZERO - Bonus Epoch on LitVM Testnet",
       "track": "crypto",
@@ -7904,22 +7824,6 @@
       "actionSteps": "1. Open the Pulsar app. 2. Open USD and EUR balances. 3. Deposit supported stablecoins to your permanent deposit address. 4. Create the free virtual card and spend online; share personal bank details to receive payments.",
       "verification": "verified",
       "riskNote": "No Pulsar fee for card creation or supported stablecoin top-ups, but other fees/limits may apply; page warns to confirm Nigeria support before adding money.",
-      "status": "active"
-    },
-    {
-      "id": 908,
-      "title": "Simon Fraser University International Undergraduate Scholars Entrance Scholarship (USES) - up to $140,000 CAD",
-      "track": "scholarships",
-      "estimatedValue": "Up to $140,000 CAD undergraduate scholarship",
-      "valueUsd": 100000,
-      "eligibility": "International undergraduate applicants including Nigerians",
-      "costType": "truly-free",
-      "expiresOn": "2026-12-15",
-      "sourceUrl": "https://scholarships.bioman.com.ng/simon-fraser-university-sfu-fully-funded-scholarship-for-foreigners/",
-      "requirements": "International undergraduate admission to SFU; strong academics",
-      "actionSteps": "1. Open the roundup. 2. Follow to SFU official scholarship page. 3. Check USES eligibility/deadline. 4. Apply for admission + scholarship before 15 Dec 2026.",
-      "verification": "pending",
-      "riskNote": "Source is a roundup; confirm amount/deadline on SFU official site.",
       "status": "active"
     },
     {
@@ -9347,6 +9251,22 @@
       "status": "active"
     },
     {
+      "id": 1006,
+      "title": "Max Planck Computer Science Internships (MPI Informatics / Software Systems / Security and Privacy)",
+      "track": "internships",
+      "estimatedValue": "12-14 week fully funded CS research internship, stipend + housing + round-trip travel",
+      "valueUsd": 5000,
+      "eligibility": "Exceptional BSc, MSc and PhD students worldwide, also BSc graduates not yet in a Master's; CS coursework or research experience",
+      "costType": "truly-free",
+      "expiresOn": null,
+      "sourceUrl": "https://www.cis.mpg.de/internships/",
+      "requirements": "CV, transcripts, at least one reference, optional motivation letter; coursework equivalent to first 3 years of CS or prior research experience",
+      "actionSteps": "1. Find a research group and faculty contact. 2. Apply at least 5 months before intended start. 3. For a Sep-Dec 2027 start, apply by about Apr 2027.",
+      "verification": "verified",
+      "riskNote": "Summer 2027 deadline was 1 Nov 2026 and is closed; Sep-Dec 2027 starts are still open with no fixed deadline. No fixed stipend amount stated on the official page.",
+      "status": "active"
+    },
+    {
       "id": 1007,
       "title": "RIKEN Center for Brain Science Summer Program 2027, Japan - Computational Neuroscience x NeuroAI",
       "track": "internships",
@@ -10064,6 +9984,22 @@
       "actionSteps": "1. Read the call on greening-energy-market-finance-emjm.eu. 2. Apply via the University of Bologna Studenti Online portal. 3. Submit before 7 Jan 2027 at 11:00 CET (morning deadline, not midnight). 4. Results 26 Feb 2027; acceptance 1–5 Mar 2027.",
       "verification": "verified",
       "riskNote": "Official site moved from the old unibo.it address to greening-energy-market-finance-emjm.eu — use the new site.",
+      "status": "active"
+    },
+    {
+      "id": 1053,
+      "title": "Welo Data — AI Trainers Network, Igbo (Nigeria)",
+      "track": "jobs",
+      "estimatedValue": "Project-based pay, disclosed on project match",
+      "valueUsd": null,
+      "eligibility": "Official Lever listing: 'Based in: Nigeria, Remote'; Igbo fluency required",
+      "costType": "truly-free",
+      "expiresOn": null,
+      "sourceUrl": "https://jobs.lever.co/weloglobal/33820f32-510e-4dde-9488-bc7f47ad4b3c",
+      "requirements": "Native/near-native Igbo; English proficiency",
+      "actionSteps": "1. Open Lever listing. 2. Submit short form to join talent network. 3. Await project match with pay details.",
+      "verification": "verified",
+      "riskNote": "Talent network, not an active job opening; pay only disclosed on match",
       "status": "active"
     }
   ]
